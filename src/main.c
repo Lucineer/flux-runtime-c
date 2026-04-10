@@ -1,23 +1,16 @@
-#include "flux/vm.h"
+#include "flux.h"
 #include <stdio.h>
-#include <string.h>
-int main(void) {
-    /* Simple demo: R0 = 3, R1 = 4, R0 = R0 * R1 */
-    uint8_t code[] = {
-        0x0B, 0, 3, 0,   /* MOVI R0, 3 */
-        0x0B, 1, 4, 0,   /* MOVI R1, 4 */
-        0x0A, 0, 1,      /* IMUL R0, R1 */
-        0x80,             /* HALT */
-    };
-    /* Fix: use proper opcodes */
-    code[0] = FLUX_MOVI; code[4] = FLUX_MOVI; code[8] = FLUX_IMUL; code[11] = FLUX_HALT;
+int main(int argc, char** argv) {
+    if (argc < 2) { printf("flux-runtime <bytecode.bin>\\n"); return 1; }
+    FILE* f = fopen(argv[1], "rb");
+    if (!f) { perror("fopen"); return 1; }
+    fseek(f, 0, SEEK_END); long sz = ftell(f); fseek(f, 0, SEEK_SET);
+    uint8_t* bc = malloc(sz); fread(bc, 1, sz, f); fclose(f);
     FluxVM vm;
-    flux_vm_init(&vm, code, sizeof(code), 4096);
-    printf("FLUX Runtime C — Micro-VM Demo\\n");
-    printf("Bytecode: %zu bytes, 85 opcodes, A2A protocol, SIMD\\n", sizeof(code));
-    int64_t cycles = flux_vm_execute(&vm);
-    printf("Result: R0 = %d (expected 12)\\n", vm.regs.gp[0]);
-    printf("Cycles: %lld\\n", (long long)cycles);
-    flux_vm_free(&vm);
-    return vm.regs.gp[0] == 12 ? 0 : 1;
+    flux_vm_init(&vm, bc, sz, 0);
+    int64_t rc = flux_vm_execute(&vm);
+    printf("Executed %ld cycles, error: %s\\n", (long)rc, flux_vm_error_string(vm.last_error));
+    printf("R0=%d R1=%d PC=%u\\n", vm.regs.gp[0], vm.regs.gp[1], vm.regs.pc);
+    flux_vm_free(&vm); free(bc);
+    return 0;
 }

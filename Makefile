@@ -1,38 +1,28 @@
-CC = gcc
-CFLAGS = -std=c11 -Wall -Wextra -O2 -Iinclude
-SRCS = src/opcodes.c src/registers.c src/memory.c src/vm.c
-OBJS = build/opcodes.o build/registers.o build/memory.o build/vm.o
-TEST_VM_OBJS = $(OBJS) build/test_vm.o
-TEST_MEM_OBJS = $(OBJS) build/test_memory.o
-MAIN_OBJS = $(OBJS) build/main.o
+CC=gcc
+CFLAGS=-std=c11 -Wall -Wextra -O2 -Iinclude
+OBJS=src/opcodes.o src/registers.o src/memory.o src/vm.o
 
-.PHONY: all test clean
+all: flux-runtime test_vm test_memory
 
-all: build/flux
+flux-runtime: src/main.c $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $^ -lm
 
-build:
-	mkdir -p build
+test_vm: tests/test_vm.c $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $^ -lm
 
-build/%.o: src/%.c | build
-	$(CC) $(CFLAGS) -c $< -o $@
+test_memory: tests/test_memory.c $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $^ -lm
 
-build/%.o: tests/%.c | build
-	$(CC) $(CFLAGS) -c $< -o $@
+src/%.o: src/%.c
+	$(CC) $(CFLAGS) -c -o $@ $<
 
-build/flux: $(MAIN_OBJS)
-	$(CC) $(CFLAGS) $^ -o $@ -lm
-
-build/test_vm: $(TEST_VM_OBJS)
-	$(CC) $(CFLAGS) $^ -o $@ -lm
-
-build/test_memory: $(TEST_MEM_OBJS)
-	$(CC) $(CFLAGS) $^ -o $@ -lm
-
-test: build/test_vm build/test_memory
-	@echo "=== VM Tests ==="
-	./build/test_vm
-	@echo "=== Memory Tests ==="
-	./build/test_memory
+test: test_vm test_memory
+	@echo "--- VM Tests ---"
+	@./test_vm
+	@echo "--- Memory Tests ---"
+	@./test_memory
 
 clean:
-	rm -rf build
+	rm -f flux-runtime test_vm test_memory src/*.o
+
+.PHONY: all test clean
