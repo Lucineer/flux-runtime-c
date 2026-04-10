@@ -1,0 +1,5 @@
+build/
+*.o
+test_vm
+test_memory
+flux-runtime
