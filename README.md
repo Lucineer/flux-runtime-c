@@ -1,134 +1,98 @@
 # flux-runtime-c
 
-**FLUX Runtime — Fluid Language Universal eXecution**
+Converged FLUX Virtual Machine -- C11 runtime with FORMAT_A-G instruction encoding.
 
-A C11 virtual machine for the FLUX instruction set. Zero dependencies, compiles on ARM64, designed for agent runtime on edge devices like the Jetson Orin Nano.
-
-## What It Does
-
-flux-runtime-c executes FLUX bytecode — a universal agent instruction set with opcodes for arithmetic, control flow, inter-agent communication (A2A), confidence propagation, trust scoring, instinct activation, and energy management.
-
-This is the **runtime heart** of the Cocapn fleet. Agents compile their logic to FLUX bytecode, and this VM executes it on bare metal.
-
-## Quick Start
-
-```bash
-# Clone
-git clone https://github.com/Lucineer/flux-runtime-c.git
-cd flux-runtime-c
-
-# Compile (GCC or Clang)
-gcc -Wall -Wextra -std=c11 -O2 -o flux-runtime src/flux_runtime.c
-
-# Run tests
-./run_tests.sh
-# Expected: 27/27 tests passing
-
-# Execute a bytecode file
-./flux-runtime program.bin
-```
-
-### Cross-Compile for ARM64 (Jetson)
-
-```bash
-# From x86 host
-aarch64-linux-gnu-gcc -Wall -Wextra -std=c11 -O2 -o flux-runtime src/flux_runtime.c
-```
-
-### Compile with Address Sanitizer
-
-```bash
-gcc -Wall -Wextra -std=c11 -g -fsanitize=address -o flux-runtime-asan src/flux_runtime.c
-./flux-runtime-asan
-```
+Joint work: Oracle1 (SuperInstance) + JetsonClaw1 (Lucineer).
 
 ## Architecture
 
-### Register File
-- **64 registers** (r0-r63), each 64-bit
-- r0 reserved (reads as 0, writes ignored)
-- r1 = return value, r2-r3 = argument passing
+| Feature | Value |
+|---------|-------|
+| Registers | 64 GP + 64 Confidence + 64 Float |
+| Memory | 64KB flat address space |
+| Stack | 256 entries |
+| Opcodes | ~150 defined (7 format widths) |
+| Dispatch | Switch statement |
+| Dependencies | Zero (C11 + libm) |
 
-### Memory Model
-- Flat 64KB address space
-- Little-endian byte order
-- LOAD/STORE for memory access
+## Instruction Formats
 
-### Opcode Categories (85 total)
+| Format | Width | Encoding | Examples |
+|--------|-------|----------|---------|
+| A | 1 byte | opcode | HALT, NOP, SYN |
+| B | 2 bytes | opcode + rd | INC, DEC, PUSH, POP |
+| C | 2 bytes | opcode + imm8 | SYS, TRAP, DBG, STRIPCF |
+| D | 3 bytes | opcode + rd + imm8 | MOVI, ADDI, SUBI, ANDI |
+| E | 4 bytes | opcode + rd + rs1 + rs2 | ADD, SUB, MUL, LOAD, STORE |
+| F | 4 bytes | opcode + rd + imm16 | MOVI16, JMP, JAL, CALL, LOOP |
+| G | 5 bytes | opcode + rd + rs1 + imm16 | LOADI, STOREI |
 
-| Category | Range | Count | Description |
-|----------|-------|-------|-------------|
-| Control | 0x00-0x0B | 12 | NOP, MOV, LOAD, STORE, PUSH, POP, JMP, JZ, JNZ, CALL, RET, HALT |
-| Arithmetic | 0x10-0x17 | 8 | ADD, SUB, MUL, DIV, MOD, SHL, SHR, AND, OR, XOR, NOT |
-| Compare | 0x20-0x27 | 8 | CMP_EQ, CMP_NE, CMP_LT, CMP_GT, CMP_LTE, CMP_GTE, CMP_ZERO |
-| A2A | 0x38-0x3F | 8 | TELL, ASK, DELEGATE, BROADCAST, REDUCE, REPLY, FORWARD, LISTEN |
-| Confidence | 0x14-0x17 | 4 | CONF_FUSE, CONF_CHAIN, CONF_SET, CONF_THRESH |
-| Trust | 0x50-0x57 | 8 | TRUST_CHECK, TRUST_UPDATE, TRUST_QUERY, TRUST_DECAY |
-| Instinct | 0x68-0x6F | 8 | INSTINCT_ACT, INSTINCT_QRY, INSTINCT_SET, INSTINCT_LEARN |
-| Energy | 0x70-0x77 | 8 | ATP_GEN, ATP_USE, ATP_QRY, ATP_XFER, APOPTOSIS |
-| System | 0x78-0x7F | 8 | DBG_PRINT, BARRIER, RESOURCE, YIELD, ABORT |
+## Opcode Categories
 
-### Switch Dispatch
+- **System Control (0x00-0x07)**: HALT, NOP, RET, IRET, BRK, WFI, RESET, SYN
+- **Single Register (0x08-0x0F)**: INC, DEC, NOT, NEG, PUSH, POP, CONF_LD, CONF_ST
+- **Immediate (0x10-0x1F)**: SYS, TRAP, DBG, CLF, STRIPCF, MOVI, ADDI, SUBI
+- **Arithmetic (0x20-0x2F)**: ADD, SUB, MUL, DIV, MOD, AND, OR, XOR, SHL, SHR, MIN, MAX
+- **Comparison (0x2C-0x2F)**: CMP_EQ, CMP_LT, CMP_GT, CMP_NE
+- **Float (0x30-0x37)**: FADD, FSUB, FMUL, FDIV, FMIN, FMAX, FTOI, ITOF
+- **Memory (0x38-0x51)**: LOAD, STORE, LOADI, STOREI, LDI8, STI8
+- **Control Flow (0x3A-0x4A)**: MOV, SWP, JZ, JNZ, JMP, JAL, CALL, LOOP, JEQ, JNE
+- **Agent-to-Agent (0x60-0x6B)**: TELL, ASK, DELEGATE, BROADCAST, REDUCE, REPLY, FORWARD, LISTEN, FORK, JOIN, WAIT, SIGNAL
+- **Confidence (0x70-0x79)**: CONF_ADD, CONF_SUB, CONF_MUL, CONF_MERGE, CONF_FUSE, CONF_CHAIN, CONF_SET, CONF_GET, CONF_CLAMP, CONF_DECAY
+- **Viewpoint/Babel (0x80-0x83)**: VP_LOAD, VP_STORE, VP_SET, VP_GET
+- **Biology/Sensor (0x90-0x98)**: SENSE, GPS, ACCEL, GYRO, TEMP, VOLT, ATP_GEN, ATP_USE, APOPTOSIS
+- **Extended Math (0xA0-0xA7)**: ABS, SQRT, POW, LOG, RAND, CLAMP, LERP, HASH
+- **Debug (0xF0-0xF2)**: DUMP, PROFILE, WATCH
 
-Uses a C11 switch statement for opcode dispatch. This is faster than computed goto on ARM64 (GCC generates jump tables automatically) and avoids `setjmp`/`longjmp` which corrupts local variables on ARM64.
+## Confidence System (Think Tank Decision)
 
-### Error Handling
+Confidence propagation is **OPTIONAL** (not default). Use STRIPCF to skip confidence side-effects for N instructions. Without STRIPCF, CONF_ ops propagate through the confidence register file:
 
-Returns error codes rather than throwing. The `running` flag is checked after each instruction to allow clean shutdown.
+- **Harmonic Mean** (CONF_ADD): 2*a*b / (a+b) -- penalizes disagreement
+- **Bayesian Fusion** (CONF_FUSE): weighted average by confidence weights
+- **Chain Multiplication** (CONF_CHAIN): sequential confidence degradation
 
-## Testing
+## StripConf (OP_STRIPCF)
+
+```
+STRIPCF 3     ; Skip confidence for next 3 ops
+MOVI   R1, 42 ; No conf side-effects
+ADD    R2,R1,R3 ; No conf side-effects  
+MUL    R4,R2,R1 ; Confidence tracking resumes
+```
+
+## Build and Test
 
 ```bash
-./run_tests.sh
+make test
+# or manually:
+gcc -std=c11 -Wall -Wextra -Werror -O2 -Iinclude -o test_flux_vm tests/test_flux_vm.c src/flux_vm.c -lm
+./test_flux_vm
 ```
 
-27 tests covering:
-- Arithmetic operations (ADD, SUB, MUL, DIV, MOD)
-- Memory operations (LOAD, STORE)
-- Control flow (JMP, JZ, JNZ, CALL, RET)
-- Stack operations (PUSH, POP)
-- Register operations (MOV)
-- Comparison and branching
-- A2A message encoding
-- System operations (HALT, NOP)
+All 39 tests pass on ARM64 (Jetson Orin Nano) and x86_64.
 
-## Companion Tools
+## A2A Opcodes
 
-| Tool | Repo | Description |
-|------|------|-------------|
-| [flux-asm](https://github.com/Lucineer/flux-asm) | C11 | Text → FLUX bytecode assembler |
-| [flux-disasm](https://github.com/Lucineer/flux-disasm) | C11 | FLUX bytecode → text disassembler |
-| [cuda-instruction-set](https://github.com/Lucineer/cuda-instruction-set) | Rust | ISA definition with 128 opcodes |
+Agent-to-Agent opcodes (0x60-0x6B) are **stubs** in this standalone VM. Real fleet runtime integration connects them to the Cocapn mesh protocol. FORK spawns conceptual children (parent ID preserved). APOPTOSIS triggers graceful self-termination (fault_code=99).
 
-## FLUX Toolchain Pipeline
+## The Deeper Connection
 
-```
-source.asm ──flux-asm──→ bytecode.bin ──flux-runtime-c──→ execution
-                                    └──flux-disasm──→ listing.txt
-```
+This VM is not a component -- it is a cell in the fleet organism. The FORMAT_A-G encoding is the DNA that every vessel shares: a 7-letter alphabet that expresses system control, memory, arithmetic, agent coordination, and confidence. When JetsonClaw1 extends Oracle1's runtime with sensor ops and StripConf, that is not a fork -- it is a mutation that gets tested by natural selection (the fleet CI). The 40:1 vocabulary-to-opcode ratio (2000 HAV terms mapped to ~50 distinct operations) means this VM carries the compressed logic of an entire ecosystem in under 20K chars of C. This is the post-SaaS era: software is not deployed, it grows.
 
-## Design Decisions
+## Related Repositories
 
-1. **No setjmp**: Corrupts locals on ARM64. Error codes + running flag instead.
-2. **JZ/JNZ use register values**: Not flag_zero. JE/JNE use flag_zero.
-3. **Switch dispatch**: Faster than computed goto on ARM64, more portable.
-4. **Zero dependencies**: No libc beyond stdio/stdlib/stdint. Runs anywhere GCC exists.
-5. **100+ opcodes planned**: Current 85 are the foundation. More to come from ISA convergence with Oracle1.
-
-## Fleet Position
-
-```
-Casey (Captain)
-└── JetsonClaw1 (hardware specialist)
-    ├── flux-runtime-c (VM execution)
-    ├── flux-asm (assembly)
-    └── flux-disasm (disassembly)
-```
+- [flux-asm](https://github.com/Lucineer/flux-asm) -- C11 assembler (41 mnemonics, text-to-bytecode)
+- [flux-disasm](https://github.com/Lucineer/flux-disasm) -- C11 disassembler (38 opcodes, 6 encoding modes)
+- [flux-isa-unified](https://github.com/Lucineer/flux-isa-unified) -- ISA convergence documentation
+- [cuda-instruction-set](https://github.com/Lucineer/cuda-instruction-set) -- Rust opcode definitions (80 opcodes, 13 categories)
+- [cuda-confidence-cascade](https://github.com/Lucineer/cuda-confidence-cascade) -- Confidence propagation patterns
+- [cuda-energy](https://github.com/Lucineer/cuda-energy) -- ATP budgeting and apoptosis protocols
+- [SuperInstance/flux-runtime-c](https://github.com/SuperInstance/flux-runtime-c) -- Oracle1's original C runtime
+- [SuperInstance/flux-runtime](https://github.com/SuperInstance/flux-runtime) -- Oracle1's Python reference (247 opcodes)
+- [iron-to-iron](https://github.com/Lucineer/iron-to-iron) -- I2I async collaboration protocol
+- [cocapn-fleet-readme](https://github.com/Lucineer/cocapn-fleet-readme) -- Fleet coordination hub
 
 ## License
 
 MIT
-
----
-
-*Built by JetsonClaw1 — Jetson Super Orin Nano 8GB, ARM64*
