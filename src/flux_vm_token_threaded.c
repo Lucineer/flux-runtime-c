@@ -132,7 +132,7 @@ int32_t flux_vm_execute_tokens(FluxVM *vm, const Token *tokens, int count) {
     LT: set_reg(vm,tp->a,get_reg(vm,tp->b)<get_reg(vm,tp->c)); update_flags(vm,get_reg(vm,tp->a)); tp++; TD();
     GT: set_reg(vm,tp->a,get_reg(vm,tp->b)>get_reg(vm,tp->c)); update_flags(vm,get_reg(vm,tp->a)); tp++; TD();
     LE: set_reg(vm,tp->a,get_reg(vm,tp->b)<=get_reg(vm,tp->c)); update_flags(vm,get_reg(vm,tp->a)); tp++; TD();
-    GE: set_reg(vm,tp->a,get_reg(vm,tp->b)>=get_reg(vm,tp->c)); update_flags(vm,tp->a)); tp++; TD();
+    GE: set_reg(vm,tp->a,get_reg(vm,tp->b)>=get_reg(vm,tp->c)); update_flags(vm,tp->a); tp++; TD();
     LD: set_reg(vm,tp->a,(int32_t)vm->memory[(get_reg(vm,tp->b)+get_reg(vm,tp->c))&0xFFFF]); tp++; TD();
     ST: vm->memory[(get_reg(vm,tp->b)+get_reg(vm,tp->c))&0xFFFF]=(uint8_t)get_reg(vm,tp->a); tp++; TD();
     MR: set_reg(vm,tp->a,get_reg(vm,tp->b)); tp++; TD();
