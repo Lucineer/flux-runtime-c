@@ -48,14 +48,15 @@ int main(void) {
         FluxVM vm;
         flux_vm_init(&vm);
         vm.gp[4] = 50;
-        /* REFLEX R4 -> offset 8; MOVI16 R5, 999 (skip target); MOVI16 R5, 777 (target); HALT */
+        /* Jump target: R5=777. Skip path: R5=999 then HALT. */
         uint8_t bc[] = {
-            0xB3, 0x04, 8, 0,       /* IASREFLEX R4, 8 */
-            0x40, 0x05, 0xE7, 0x03, /* MOVI16 R5, 999 (skip) */
-            0x40, 0x05, 0x09, 0x03, /* MOVI16 R5, 777 (target) */
+            0xB3, 0x04, 9, 0,       /* IASREFLEX R4, addr=9 */
+            0x40, 0x05, 0xE7, 0x03, /* MOVI16 R5, 999 (skip path) */
+            0x00,                   /* HALT */
+            0x40, 0x05, 0x09, 0x03, /* MOVI16 R5, 777 (jump target) */
             0x00                    /* HALT */
         };
-        flux_vm_execute(&vm, bc, 13);
+        flux_vm_execute(&vm, bc, 14);
         if (vm.gp[5] == 777 && vm.gp[4] == 49) PASS("iasreflex_trigger");
         else { printf("  FAIL: iasreflex_trigger (R5=%d R4=%d)\n", vm.gp[5], vm.gp[4]); failures++; }
     }
@@ -65,13 +66,15 @@ int main(void) {
         FluxVM vm;
         flux_vm_init(&vm);
         vm.gp[4] = 0;
+        /* Skip path: R5=999 then HALT. Jump target: R5=777 */
         uint8_t bc[] = {
-            0xB3, 0x04, 8, 0,
-            0x40, 0x05, 0xE7, 0x03,
-            0x40, 0x05, 0x09, 0x03,
-            0x00
+            0xB3, 0x04, 9, 0,       /* IASREFLEX R4, addr=9 */
+            0x40, 0x05, 0xE7, 0x03, /* MOVI16 R5, 999 (skip path) */
+            0x00,                   /* HALT (stop here on skip) */
+            0x40, 0x05, 0x09, 0x03, /* MOVI16 R5, 777 (jump target) */
+            0x00                    /* HALT (stop after jump) */
         };
-        flux_vm_execute(&vm, bc, 13);
+        flux_vm_execute(&vm, bc, 14);
         if (vm.gp[5] == 999) PASS("iasreflex_skip");
         else { FAIL("iasreflex_skip", vm.gp[5], 999); failures++; }
     }
