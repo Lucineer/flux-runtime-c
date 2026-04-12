@@ -31,51 +31,44 @@ int flux_format_size(uint8_t opcode) {
     if (opcode <= 0x3F) return 4;  /* Format E */
     if (opcode <= 0x4F) return 4;  /* Format F */
     if (opcode <= 0x5F) return 5;  /* Format G */
-    if (opcode <= 0x9F) return 4;  /* A2A, Conf, VP, Bio, ExtMath: all Format E */
-    /* 0xA0-0xAF: Extended Math — Format E */
-    if (opcode <= 0xAF) return 4;
-    /* 0xB0-0xBF: Instinct — mixed B/F */
+    if (opcode <= 0x9F) return 4;  /* A2A, Conf, VP, Bio, ExtMath */
+    if (opcode <= 0xAF) return 4;  /* Extended Math */
+    /* 0xB0-0xBF: Instinct — mixed */
     if (opcode <= 0xBF) {
         switch (opcode) {
-            case 0xB2: case 0xB6: case 0xB7:  /* Format B */
-            case 0xB8: case 0xB9:              /* Format B */
-                return 2;
-            default: return 4;                  /* Format F/E */
+            case 0xB2: case 0xB6: case 0xB7: case 0xB8: case 0xB9: return 2;
+            default: return 4;
         }
     }
     /* 0xC0-0xCF: Trust — mixed */
     if (opcode <= 0xCF) {
-        if (opcode == 0xC2 || opcode == 0xC5) return 2;  /* Format B */
+        if (opcode == 0xC2 || opcode == 0xC5) return 2;
         return 4;
     }
-    /* 0xD0-0xDF: Memory Management — mixed */
-    if (opcode <= 0xDF) {
-        if (opcode == 0xD4) return 4;  /* MEMSWAP: Format E */
-        if (opcode == 0xD6 || opcode == 0xD7) return 2;  /* Format B */
-        return 5;  /* Format G */
-    }
-    /* 0xC8-0xCF: Trust Extended — Format E */
-    if (opcode <= 0xCF) return 4;
-    /* 0xD0-0xDF: Memory Management — mixed */
+    /* 0xD0-0xD4: Memory — mixed */
     if (opcode <= 0xD4) {
-        if (opcode == 0xD4) return 4;  /* MEMSWAP: Format E */
+        if (opcode == 0xD4) return 4;  /* MEMSWAP */
         return 5;  /* D0-D3: Format G */
     }
+    /* 0xD5-0xDF: Memory Extended — mixed */
     if (opcode <= 0xDF) {
-        if (opcode == 0xDD || opcode == 0xDE) return 4; /* STACKFRAME, HEAP_ALLOC */
-        if (opcode == 0xDF) return 2;  /* HEAP_FREE */
-        return 5;  /* D8-DC: Format G */
+        if (opcode == 0xDD || opcode == 0xDE) return 4;
+        if (opcode == 0xDF) return 2;
+        return 5;
     }
-    /* 0xE0-0xEF: Bit Manipulation + Time/Random — mixed */
-    if (opcode <= 0xE2) return 2;  /* BITCOUNT, BITSCAN, BITREV */
-    if (opcode <= 0xE4) return 4;  /* ROTL, ROTR */
-    if (opcode == 0xE5 || opcode == 0xE6 || opcode == 0xE7) return 5; /* BEXTR, BDEP, MERGE */
+    /* 0xE0-0xEF: Bit/Time — mixed */
+    if (opcode <= 0xE2) return 2;
+    if (opcode <= 0xE4) return 4;
+    if (opcode == 0xE5 || opcode == 0xE6 || opcode == 0xE7) return 5;
+    if (opcode == 0xE8 || opcode == 0xE9) return 4; /* RAND_RANGE, RAND_WEIGHTED */
     if (opcode == 0xEA || opcode == 0xEF) return 2; /* CYCLE_READ, ATOMIC_CAS */
-    if (opcode == 0xEB || opcode == 0xED || opcode == 0xEE) return 4; /* ALARM, VARINT */
-    return 5; /* E8, E9 (weighted), EC (CRC32) — Format G or 4 for E8/E9 */
-    /* 0xF0-0xFF: Debug — Format A */
+    if (opcode == 0xEB || opcode == 0xED || opcode == 0xEE) return 4;
+    return 5;  /* EC: CRC32 is Format G */
+    /* 0xF0-0xFF: Debug */
     return 1;
 }
+
+
 
 void flux_vm_init(FluxVM* vm) {
     memset(vm, 0, sizeof(FluxVM));
