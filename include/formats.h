@@ -178,6 +178,47 @@
 #define OP_ISTINCT_CONVERGE  0xB6  /* Format B: rd -> 25% toward group avg */
 #define OP_ISTINCT_EXTINCT   0xB7  /* Format B: if |rd|<10, rd=0 */
 
+
+/* ── Instinct Extended (0xB8-0xBF) ── */
+#define OP_ISTINCT_HABITUATE  0xB8  /* Format B: rd = min(rd+1, 255) — strengthen instinct */
+#define OP_ISTINCT_SENSITIZE  0xB9  /* Format B: if experience occurs, rd += factor */
+#define OP_ISTINCT_GENERALIZE 0xBA  /* Format E: rd,rs1 -> rd = (rd + rs1) / 2 */
+#define OP_ISTINCT_SPECIALIZE 0xBB  /* Format E: rd,rs1 -> if |rd-rs1| < threshold, rd stays else rd=0 */
+#define OP_ISTINCT_DIFFUSE    0xBC  /* Format E: rd,rs1,rs2 -> distribute rd proportionally across rs1..rs2 */
+#define OP_ISTINCT_INHIBIT    0xBD  /* Format E: rd,rs1 -> if rd active, suppress rs1 */
+#define OP_ISTINCT_SUM        0xBE  /* Format E: rd,rs1 -> rd += rs1 */
+#define OP_ISTINCT_DIFF       0xBF  /* Format E: rd,rs1 -> rd -= rs1 */
+
+/* ── Trust Opcodes (0xC0-0xCF) ── */
+#define OP_TRUST_INIT    0xC0  /* Format F: rd = base trust (imm16) */
+#define OP_TRUST_UPDATE  0xC1  /* Format E: rd,rs1 -> rd = bayesian_update(rd, rs1) */
+#define OP_TRUST_DECAY   0xC2  /* Format B: rd = rd * 0.99 */
+#define OP_TRUST_COMPARE 0xC3  /* Format E: rd,rs1 -> zero_flag = (rd >= rs1) */
+#define OP_TRUST_MIN     0xC4  /* Format E: rd,rs1 -> rd = min(rd, rs1) — trust floor */
+#define OP_TRUST_REVOKE  0xC5  /* Format B: rd = 0 — immediate trust revocation */
+#define OP_TRUST_RESTRICT 0xC6 /* Format F: rd = min(rd, imm16) — trust cap */
+#define OP_TRUST_SCORE   0xC7  /* Format E: rd,rs1,rs2 -> rd = weighted_avg(rs1, rs2) */
+
+/* ── Memory Management (0xD0-0xDF) ── */
+#define OP_MEMSET   0xD0  /* Format G: fill mem[rs1..rs1+imm16] with rd */
+#define OP_MEMCPY   0xD1  /* Format G: copy imm16 bytes from mem[rs1] to mem[rd] */
+#define OP_MEMCMP   0xD2  /* Format G: compare imm16 bytes at rd vs rs1, zero_flag=result */
+#define OP_MEMFILL  0xD3  /* Format F: fill mem[imm16] with rd */
+#define OP_MEMSWAP  0xD4  /* Format E: swap rd and rs1 (swap register values) */
+#define OP_HEAP_ALLOC  0xD5  /* Format F: rd = heap_alloc(imm16) returns heap offset */
+#define OP_HEAP_FREE   0xD6  /* Format B: heap_free(rd) */
+#define OP_STACK_FRAME  0xD7  /* Format F: push frame pointer, allocate imm16 locals */
+
+/* ── Bit Manipulation (0xE0-0xEF) ── */
+#define OP_BITCOUNT  0xE0  /* Format B: rd = popcount(rd) */
+#define OP_BITSCAN   0xE1  /* Format B: rd = CLZ(rd) */
+#define OP_BITREV    0xE2  /* Format B: rd = bit_reverse(rd) */
+#define OP_ROTL      0xE3  /* Format E: rd,rs1 -> rd = rotate_left(rd, rs1) */
+#define OP_ROTR      0xE4  /* Format E: rd,rs1 -> rd = rotate_right(rd, rs1) */
+#define OP_BEXTR     0xE5  /* Format G: rd = extract_bits(rs1, imm16) */
+#define OP_BDEP      0xE6  /* Format G: rd = deposit_bits(rs1, imm16) */
+#define OP_MERGE     0xE7  /* Format E: rd,rs1 -> merge flags from rs1 into rd */
+
 /* ── Format A: Extended System/Debug (0xF0-0xFF) ── */
 #define OP_DUMP     0xF0
 #define OP_PROFILE  0xF1
