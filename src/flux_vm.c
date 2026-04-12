@@ -329,88 +329,62 @@ int32_t flux_vm_step(FluxVM* vm, const uint8_t* bc, int32_t len) {
     case OP_LERP:  { rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3]; set_reg(vm,rd,get_reg(vm,rs1)+(get_reg(vm,rs2)-get_reg(vm,rs1))*get_reg(vm,rd)/100); return 4; }
     case OP_HASH:  { rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; uint32_t h=(uint32_t)get_reg(vm,rs1); h=((h>>16)^h)*0x45d9f3b; h=((h>>16)^h)*0x45d9f3b; h=(h>>16)^h; set_reg(vm,rd,(int32_t)h); return 4; }
 
+    /* ═══ Instinct Opcodes (0xB0-0xB7) ═══ */
+    /* Format F: 4 bytes (op rd imm16_lo imm16_hi) */
+    case OP_ISTINCT_LOAD:
+        rd = bc[vm->pc+1];
+        imm16 = read_i16(bc, vm->pc+2);
+        set_reg(vm, rd, vm->memory[imm16 & (FLUX_MEMORY_SIZE-1)]);
+        return 4;
+    case OP_ISTINCT_STORE:
+        rd = bc[vm->pc+1];
+        imm16 = read_i16(bc, vm->pc+2);
+        vm->memory[imm16 & (FLUX_MEMORY_SIZE-1)] = get_reg(vm, rd);
+        return 4;
+    case OP_ISTINCT_REFLEX:
+        rd = bc[vm->pc+1];
+        imm16 = read_i16(bc, vm->pc+2);
+        if (get_reg(vm, rd) > 0) {
+            set_reg(vm, rd, get_reg(vm, rd) - 1);
+            vm->pc = imm16;
+            return 0; /* jump */
+        }
+        return 4;
+    case OP_ISTINCT_MODULATE:
+        rd = bc[vm->pc+1];
+        rs1 = bc[vm->pc+2]; /* reused as factor high byte */
+        imm16 = read_i16(bc, vm->pc+2);
+        set_reg(vm, rd, (int32_t)((int64_t)get_reg(vm, rd) * imm16 / 1000));
+        return 4;
+    case OP_ISTINCT_THRESHOLD:
+        rd = bc[vm->pc+1];
+        imm16 = read_i16(bc, vm->pc+2);
+        set_reg(vm, rd, (get_reg(vm, rd) >= imm16) ? 1 : 0);
+        return 4;
+    /* Format B: 2 bytes (op rd) */
+    case OP_ISTINCT_DECAY:
+        rd = bc[vm->pc+1];
+        set_reg(vm, rd, (int32_t)(get_reg(vm, rd) * 0.95f));
+        return 2;
+    case OP_ISTINCT_CONVERGE:
+        rd = bc[vm->pc+1];
+        { int32_t sum = 0, count = 0, base_r = (rd / 8) * 8;
+          for (int i = base_r; i < base_r + 8 && i < FLUX_NUM_REGS; i++)
+              if (i != rd && i != 0) { sum += vm->gp[i]; count++; }
+          if (count > 0) { int32_t avg = sum / count;
+            set_reg(vm, rd, get_reg(vm, rd) + (avg - get_reg(vm, rd)) / 4); }
+        }
+        return 2;
+    case OP_ISTINCT_EXTINCT:
+        rd = bc[vm->pc+1];
+        { int32_t val = get_reg(vm, rd);
+          if (val > -10 && val < 10) set_reg(vm, rd, 0); }
+        return 2;
+
     /* ═══ Format A: Extended System (0xF0-0xFF) ═══ */
     case OP_DUMP:    return 1; /* stub */
     case OP_PROFILE: return 1; /* stub */
     case OP_WATCH:   return 1; /* stub */
-
-
-    /* === Instinct Opcodes (0x68-0x6F) === */
-    case 0x68: /* INSTINCT_LOAD rd, addr - load instinct weight */
-        rd = bc[pc+1];
-        addr = read_i16(bc+pc+2);
-        vm->gp[rd] = vm->memory[addr & (FLUX_MEM_SIZE-1)];
-        pc += 4;
-        break;
-
-    case 0x69: /* INSTINCT_STORE rd, addr - store instinct weight */
-        rd = bc[pc+1];
-        addr = read_i16(bc+pc+2);
-        vm->memory[addr & (FLUX_MEM_SIZE-1)] = vm->gp[rd];
-        pc += 4;
-        break;
-
-    case 0x6A: /* INSTINCT_DECAY rd - exponential decay toward zero */
-        rd = bc[pc+1];
-        vm->gp[rd] = (int32_t)(vm->gp[rd] * 0.95f);
-        pc += 2;
-        break;
-
-    case 0x6B: /* INSTINCT_REFLEX rd, target - reflex action, bypass deliberation */
-        rd = bc[pc+1];
-        addr = read_i16(bc+pc+2);
-        /* Reflex: if instinct strength > 0, execute action at addr immediately */
-        if (vm->gp[rd] > 0) {
-            vm->gp[rd] -= 1; /* instinct consumes energy on use */
-            pc = addr;
-        } else {
-            pc += 4;
-        }
-        break;
-
-    case 0x6C: /* INSTINCT_MODULATE rd, mod - multiply instinct by context factor */
-        rd = bc[pc+1];
-        {
-            int32_t mod = read_i16(bc+pc+2);
-            vm->gp[rd] = (int32_t)((int64_t)vm->gp[rd] * mod / 1000);
-            pc += 4;
-        }
-        break;
-
-    case 0x6D: /* INSTINCT_THRESHOLD rd, th - if rd >= th, set rd=1 else rd=0 */
-        rd = bc[pc+1];
-        {
-            int32_t th = read_i16(bc+pc+2);
-            vm->gp[rd] = (vm->gp[rd] >= th) ? 1 : 0;
-            pc += 4;
-        }
-        break;
-
-    case 0x6E: /* INSTINCT_CONVERGE rd - move toward average of nearby instincts */
-        rd = bc[pc+1];
-        {
-            int32_t sum = 0;
-            int count = 0;
-            int base = (rd / 8) * 8; /* instinct groups of 8 */
-            for (int i = base; i < base + 8 && i < FLUX_NUM_REGS; i++) {
-                if (i != rd) { sum += vm->gp[i]; count++; }
-            }
-            if (count > 0) {
-                int32_t avg = sum / count;
-                vm->gp[rd] = vm->gp[rd] + (avg - vm->gp[rd]) / 4; /* move 25% toward average */
-            }
-            pc += 2;
-        }
-        break;
-
-    case 0x6F: /* INSTINCT_EXTINCT rd - prune weak instinct */
-        rd = bc[pc+1];
-        if (abs(vm->gp[rd]) < 10) {
-            vm->gp[rd] = 0; /* extinction threshold */
-        }
-        pc += 2;
-        break;
-
     default:
         vm->faulted = true;
         vm->fault_code = 3; /* unknown opcode */
