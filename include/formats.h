@@ -199,17 +199,24 @@
 #define OP_TRUST_RESTRICT 0xC6 /* Format F: rd = min(rd, imm16) — trust cap */
 #define OP_TRUST_SCORE   0xC7  /* Format E: rd,rs1,rs2 -> rd = weighted_avg(rs1, rs2) */
 
-/* ── Memory Management (0xD0-0xDF) ── */
-#define OP_MEMSET   0xD0  /* Format G: fill mem[rs1..rs1+imm16] with rd */
-#define OP_MEMCPY   0xD1  /* Format G: copy imm16 bytes from mem[rs1] to mem[rd] */
-#define OP_MEMCMP   0xD2  /* Format G: compare imm16 bytes at rd vs rs1, zero_flag=result */
-#define OP_MEMFILL  0xD3  /* Format F: fill mem[imm16] with rd */
-#define OP_MEMSWAP  0xD4  /* Format E: swap rd and rs1 (swap register values) */
-#define OP_HEAP_ALLOC  0xD5  /* Format F: rd = heap_alloc(imm16) returns heap offset */
-#define OP_HEAP_FREE   0xD6  /* Format B: heap_free(rd) */
-#define OP_STACK_FRAME  0xD7  /* Format F: push frame pointer, allocate imm16 locals */
+/* ── Memory Management (0xD0-0xD7) ── */
+#define OP_MEMSET       0xD0  /* Format G: fill mem[rs1..rs1+imm16] with rd */
+#define OP_MEMCPY       0xD1  /* Format G: copy imm16 bytes from mem[rs1] to mem[rd] */
+#define OP_MEMCMP       0xD2  /* Format G: compare imm16 bytes at rd vs rs1 */
+#define OP_MEMFILL      0xD3  /* Format F: fill mem[0..imm16] with rd */
+#define OP_MEMSWAP      0xD4  /* Format E: swap rd and rs1 */
 
-/* ── Bit Manipulation (0xE0-0xEF) ── */
+/* ── Memory Extended (0xD8-0xDF) ── */
+#define OP_MEMSCAN      0xD8  /* Format G: scan for rd in mem[rs1..rs1+imm16] */
+#define OP_MEMINDEX     0xD9  /* Format G: first nonzero in mem[rs1..rs1+imm16] */
+#define OP_MEMSUM       0xDA  /* Format G: sum imm16 bytes at mem[rs1] */
+#define OP_MEMRANGE_MIN 0xDB  /* Format G: min of mem[rs1..rs1+imm16] */
+#define OP_MEMRANGE_MAX 0xDC  /* Format G: max of mem[rs1..rs1+imm16] */
+#define OP_STACKFRAME   0xDD  /* Format F: push frame pointer, allocate imm16 locals */
+#define OP_HEAP_ALLOC   0xDE  /* Format F: rd = heap_alloc(imm16) */
+#define OP_HEAP_FREE    0xDF  /* Format B: heap_free(rd) */
+
+/* ── Bit Manipulation (0xE0-0xE7) ── */
 #define OP_BITCOUNT  0xE0  /* Format B: rd = popcount(rd) */
 #define OP_BITSCAN   0xE1  /* Format B: rd = CLZ(rd) */
 #define OP_BITREV    0xE2  /* Format B: rd = bit_reverse(rd) */
