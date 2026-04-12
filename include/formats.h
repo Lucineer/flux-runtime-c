@@ -167,6 +167,17 @@
 #define OP_LERP     0xA6
 #define OP_HASH     0xA7
 
+
+/* ── Instinct Opcodes (0xB0-0xB7) ── */
+#define OP_ISTINCT_LOAD      0xB0  /* Format F: rd = mem[imm16] */
+#define OP_ISTINCT_STORE     0xB1  /* Format F: mem[imm16] = rd */
+#define OP_ISTINCT_DECAY     0xB2  /* Format B: rd *= 0.95 */
+#define OP_ISTINCT_REFLEX    0xB3  /* Format F: if rd>0, jump imm16, rd-- */
+#define OP_ISTINCT_MODULATE  0xB4  /* Format F: rd = rd * imm16 / 1000 */
+#define OP_ISTINCT_THRESHOLD 0xB5  /* Format F: if rd>=imm16, rd=1 else rd=0 */
+#define OP_ISTINCT_CONVERGE  0xB6  /* Format B: rd -> 25% toward group avg */
+#define OP_ISTINCT_EXTINCT   0xB7  /* Format B: if |rd|<10, rd=0 */
+
 /* ── Format A: Extended System/Debug (0xF0-0xFF) ── */
 #define OP_DUMP     0xF0
 #define OP_PROFILE  0xF1
