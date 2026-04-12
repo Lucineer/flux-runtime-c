@@ -7,7 +7,7 @@ LDFLAGS = -lm
 all: test_instinct
 
 test_instinct: tests/test_instinct.c src/flux_vm.c
-	$(CC) -o test_instinct tests/test_instinct.c -I src $(CFLAGS)
+	$(CC) -o test_instinct tests/test_instinct.c -Iinclude -Isrc $(CFLAGS)
 	./test_instinct
  test_flux_vm
 
