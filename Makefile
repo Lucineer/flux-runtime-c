@@ -4,7 +4,12 @@ LDFLAGS = -lm
 
 .PHONY: all test clean
 
-all: test_instinct test_extended
+all: test_instinct test_extended test_final
+
+test_final: tests/test_final.c src/flux_vm.c src/memory.c
+	$(CC) $(CFLAGS) -o test_final tests/test_final.c src/flux_vm.c src/memory.c $(LDFLAGS)
+	./test_final
+
 
 test_extended: tests/test_extended.c src/flux_vm.c src/memory.c
 	$(CC) $(CFLAGS) -o test_extended tests/test_extended.c src/flux_vm.c src/memory.c $(LDFLAGS)
