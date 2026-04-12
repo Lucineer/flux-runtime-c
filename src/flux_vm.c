@@ -31,15 +31,38 @@ int flux_format_size(uint8_t opcode) {
     if (opcode <= 0x3F) return 4;  /* Format E */
     if (opcode <= 0x4F) return 4;  /* Format F */
     if (opcode <= 0x5F) return 5;  /* Format G */
-    /* 0x60-0x8F: Format E (4 bytes) */
-    if (opcode <= 0x8F) return 4;
-    /* 0x90-0x9F: Biology — Format E (4 bytes) */
-    if (opcode <= 0x9F) return 4;
-    /* 0xA0-0xAF: Extended Math — Format E (4 bytes) */
+    if (opcode <= 0x9F) return 4;  /* A2A, Conf, VP, Bio, ExtMath: all Format E */
+    /* 0xA0-0xAF: Extended Math — Format E */
     if (opcode <= 0xAF) return 4;
-    /* 0xB0-0xBF: Instinct — mixed */
-    if (opcode == 0xB2 || opcode == 0xB6 || opcode == 0xB7) return 2; /* Format B */
-    return 4; /* Format F for B0,B1,B3,B4,B5 */
+    /* 0xB0-0xBF: Instinct — mixed B/F */
+    if (opcode <= 0xBF) {
+        switch (opcode) {
+            case 0xB2: case 0xB6: case 0xB7:  /* Format B */
+            case 0xB8: case 0xB9:              /* Format B */
+                return 2;
+            default: return 4;                  /* Format F/E */
+        }
+    }
+    /* 0xC0-0xCF: Trust — mixed */
+    if (opcode <= 0xCF) {
+        if (opcode == 0xC2 || opcode == 0xC5) return 2;  /* Format B */
+        return 4;
+    }
+    /* 0xD0-0xDF: Memory Management — mixed */
+    if (opcode <= 0xDF) {
+        if (opcode == 0xD4) return 4;  /* MEMSWAP: Format E */
+        if (opcode == 0xD6 || opcode == 0xD7) return 2;  /* Format B */
+        return 5;  /* Format G */
+    }
+    /* 0xE0-0xEF: Bit Manipulation — mixed */
+    if (opcode <= 0xEF) {
+        if (opcode <= 0xE2) return 2;  /* Format B */
+        if (opcode <= 0xE4) return 4;  /* Format E */
+        return 5;  /* Format G */
+    }
+    /* 0xF0-0xFF: Debug — Format A */
+    return 1;
+}
 }
 
 void flux_vm_init(FluxVM* vm) {
