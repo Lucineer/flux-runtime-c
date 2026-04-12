@@ -57,17 +57,14 @@ int flux_format_size(uint8_t opcode) {
     /* 0xC8-0xCF: Trust Extended — Format E */
     if (opcode <= 0xCF) return 4;
     /* 0xD0-0xDF: Memory Management — mixed */
-    if (opcode <= 0xD7) {
-        if (opcode == 0xD4) return 4;
-        if (opcode == 0xD6) return 2;
-        return 5;
+    if (opcode <= 0xD4) {
+        if (opcode == 0xD4) return 4;  /* MEMSWAP: Format E */
+        return 5;  /* D0-D3: Format G */
     }
-    /* 0xD8-0xDF: Memory Extended — mixed */
     if (opcode <= 0xDF) {
-        if (opcode == 0xDD) return 4; /* STACKFRAME */
-        if (opcode == 0xDE) return 4; /* HEAP_ALLOC */
-        if (opcode == 0xDF) return 2; /* HEAP_FREE */
-        return 5; /* D8-DC are Format G */
+        if (opcode == 0xDD || opcode == 0xDE) return 4; /* STACKFRAME, HEAP_ALLOC */
+        if (opcode == 0xDF) return 2;  /* HEAP_FREE */
+        return 5;  /* D8-DC: Format G */
     }
     /* 0xE0-0xEF: Bit Manipulation + Time/Random — mixed */
     if (opcode <= 0xE2) return 2;  /* BITCOUNT, BITSCAN, BITREV */
