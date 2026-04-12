@@ -15,6 +15,42 @@ Joint work: Oracle1 (SuperInstance) + JetsonClaw1 (Lucineer).
 | Dispatch | Switch statement |
 | Dependencies | Zero (C11 + libm) |
 
+
+## Complete ISA — 200 Opcodes
+
+| Range | Category | Opcodes |
+|-------|----------|---------|
+| 0x00-0x07 | System | HALT NOP RET IRET BRK WFI RESET SYN |
+| 0x08-0x0F | Register | INC DEC NOT NEG PUSH_R POP_R CONF_LD CONF_ST |
+| 0x10-0x17 | Control | SYS TRAP DBG CLF SEMA YIELD CACHE STRIPCF |
+| 0x18-0x1F | Imm8 | MOVI ADDI SUBI ANDI ORI XORI SHLI SHRI |
+| 0x20-0x3F | Core | ADD SUB MUL DIV MOD LOAD STORE MOV SWP CMP JZ JNZ JLT JGT FADD FSUB FMUL FDIV FMIN FMAX FTOF ITOR |
+| 0x40-0x4F | Imm16 | MOVI16 JMP JAL CALL LOOP JEQ JNE JLE JGE LDI8 STI8 |
+| 0x50-0x5F | Indexed | LOADI STOREI |
+| 0x60-0x6F | A2A | TELL ASK DELEGATE BROADCAST REDUCE REPLY FORWARD LISTEN FORK JOIN WAIT SIGNAL |
+| 0x70-0x7F | Confidence | CONF_ADD SUB MUL MERGE FUSE CHAIN SET GET CLAMP DECAY |
+| 0x80-0x8F | Viewpoint | VP_LOAD VP_STORE VP_SET VP_GET |
+| 0x90-0x9F | Biology | SENSE GPS ACCEL GYRO TEMP VOLT ATP_GEN ATP_USE APOPTOSIS |
+| 0xA0-0xAF | ExtMath | ABS SQRT POW LOG RAND CLAMP LERP HASH |
+| 0xB0-0xBF | Instinct | LOAD STORE DECAY REFLEX MODULATE THRESHOLD CONVERGE EXTINCT HABITUATE SENSITIZE GENERALIZE SPECIALIZE DIFFUSE INHIBIT SUM DIFF |
+| 0xC0-0xCF | Trust | INIT UPDATE DECAY COMPARE MIN REVOKE RESTRICT SCORE AVERAGE BOOST WEAKEN VERIFY TRANSFER SEED SCOPE FLOOR |
+| 0xD0-0xDF | Memory | MEMSET MEMCPY MEMCMP MEMFILL MEMSWAP MEMSCAN MEMINDEX MEMSUM RANGE_MIN RANGE_MAX STACKFRAME HEAP_ALLOC HEAP_FREE |
+| 0xE0-0xEF | BitTime | BITCOUNT BITSCAN BITREV ROTL ROTR BEXTR BDEP MERGE RAND_RANGE RAND_WEIGHTED CYCLE_READ ALARM CRC32 ENCODE_VARINT DECODE_VARINT ATOMIC_CAS |
+| 0xF0-0xFF | Debug | DUMP PROFILE WATCH |
+
+## Dispatch Variants
+
+| Variant | Speed (ARM64) | Notes |
+|---------|--------------|-------|
+| Switch | 362 Mops/s | Baseline, portable |
+| Computed Goto | 1,564 Mops/s | 4.3x, exploits RAS |
+| Token Threaded | 303 Mops/s | Direct threading w/o labels |
+| Subroutine | 166 Mops/s | Call/ret dispatch |
+| Coroutine | pending | setjmp/longjmp (ARM64 issues) |
+
+## Test Results
+
+92 tests, 0 failures — ARM64 Jetson Orin Nano, gcc 11.4, -O2.
 ## Instruction Formats
 
 | Format | Width | Encoding | Examples |
