@@ -411,6 +411,146 @@ int32_t flux_vm_step(FluxVM* vm, const uint8_t* bc, int32_t len) {
           if (val > -10 && val < 10) set_reg(vm, rd, 0); }
         return 2;
 
+
+    /* ═══ Instinct Extended (0xB8-0xBF) ═══ */
+    case OP_ISTINCT_HABITUATE:
+        rd = bc[vm->pc+1];
+        { int32_t v = get_reg(vm, rd); set_reg(vm, rd, v < 255 ? v + 1 : 255); }
+        return 2;
+    case OP_ISTINCT_SENSITIZE:
+        rd = bc[vm->pc+1];
+        { int32_t v = get_reg(vm, rd); set_reg(vm, rd, v < 127 ? v * 2 : 255); }
+        return 2;
+    case OP_ISTINCT_GENERALIZE:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        set_reg(vm, rd, (get_reg(vm, rd) + get_reg(vm, rs1)) / 2);
+        return 4;
+    case OP_ISTINCT_SPECIALIZE:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        { int32_t diff = get_reg(vm, rd) - get_reg(vm, rs1);
+          if (diff > -50 && diff < 50) { /* stay */ }
+          else set_reg(vm, rd, 0); }
+        return 4;
+    case OP_ISTINCT_DIFFUSE:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        { int32_t total = get_reg(vm, rd);
+          int count = rs1 > 0 ? rs1 : 1;
+          int share = total / count;
+          for (int i = 1; i <= rs1 && i < FLUX_NUM_REGS; i++)
+              set_reg(vm, i, get_reg(vm, i) + share);
+          set_reg(vm, rd, total - share * count); }
+        return 4;
+    case OP_ISTINCT_INHIBIT:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        if (get_reg(vm, rd) > 0) set_reg(vm, rs1, 0);
+        return 4;
+    case OP_ISTINCT_SUM:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        set_reg(vm, rd, get_reg(vm, rd) + get_reg(vm, rs1));
+        return 4;
+    case OP_ISTINCT_DIFF:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        set_reg(vm, rd, get_reg(vm, rd) - get_reg(vm, rs1));
+        return 4;
+
+    /* ═══ Trust Opcodes (0xC0-0xCF) ═══ */
+    case OP_TRUST_INIT:
+        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
+        set_reg(vm, rd, imm16);
+        return 4;
+    case OP_TRUST_UPDATE:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        /* Bayesian: new_trust = old * (1 - evidence_weight) + evidence * evidence_weight */
+        { int32_t old_t = get_reg(vm, rd); int32_t evidence = get_reg(vm, rs1);
+          set_reg(vm, rd, old_t + (evidence - old_t) / 10); }
+        return 4;
+    case OP_TRUST_DECAY:
+        rd = bc[vm->pc+1];
+        set_reg(vm, rd, (int32_t)(get_reg(vm, rd) * 0.99f));
+        return 2;
+    case OP_TRUST_COMPARE:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        vm->zero_flag = (get_reg(vm, rd) >= get_reg(vm, rs1)) ? 1 : 0;
+        return 4;
+    case OP_TRUST_MIN:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        { int32_t a = get_reg(vm, rd), b = get_reg(vm, rs1);
+          set_reg(vm, rd, a < b ? a : b); }
+        return 4;
+    case OP_TRUST_REVOKE:
+        rd = bc[vm->pc+1];
+        set_reg(vm, rd, 0);
+        return 2;
+    case OP_TRUST_RESTRICT:
+        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
+        { int32_t v = get_reg(vm, rd); set_reg(vm, rd, v < imm16 ? v : imm16); }
+        return 4;
+    case OP_TRUST_SCORE:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; rs2 = bc[vm->pc+3];
+        set_reg(vm, rd, (get_reg(vm, rs1) * 3 + get_reg(vm, rs2) * 7) / 10);
+        return 4;
+
+    /* ═══ Memory Management (0xD0-0xDF) ═══ */
+    case OP_MEMSET:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; imm16 = read_i16(bc, vm->pc+3);
+        { uint32_t val = (uint32_t)get_reg(vm, rd) & 0xFF;
+          for (int32_t i = 0; i < imm16; i++)
+              vm->memory[(get_reg(vm, rs1) + i) & (FLUX_MEMORY_SIZE-1)] = (uint8_t)val; }
+        return 5;
+    case OP_MEMCPY:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; imm16 = read_i16(bc, vm->pc+3);
+        { int32_t dst = get_reg(vm, rd), src = get_reg(vm, rs1);
+          for (int32_t i = 0; i < imm16 && i < FLUX_MEMORY_SIZE; i++)
+              vm->memory[(dst+i) & (FLUX_MEMORY_SIZE-1)] = vm->memory[(src+i) & (FLUX_MEMORY_SIZE-1)]; }
+        return 5;
+    case OP_MEMCMP:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; imm16 = read_i16(bc, vm->pc+3);
+        { vm->zero_flag = 1;
+          for (int32_t i = 0; i < imm16; i++) {
+              if (vm->memory[(get_reg(vm,rd)+i)&(FLUX_MEMORY_SIZE-1)] != vm->memory[(get_reg(vm,rs1)+i)&(FLUX_MEMORY_SIZE-1)])
+              { vm->zero_flag = 0; break; } } }
+        return 5;
+    case OP_MEMFILL:
+        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
+        { uint32_t val = (uint32_t)get_reg(vm, rd) & 0xFF;
+          for (int32_t i = 0; i < imm16 && i < FLUX_MEMORY_SIZE; i++)
+              vm->memory[(imm16 + i) & (FLUX_MEMORY_SIZE-1)] = (uint8_t)val; }
+        return 4;
+    case OP_MEMSWAP:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        { int32_t tmp = get_reg(vm, rd); set_reg(vm, rd, get_reg(vm, rs1)); set_reg(vm, rs1, tmp); }
+        return 4;
+
+    /* ═══ Bit Manipulation (0xE0-0xEF) ═══ */
+    case OP_BITCOUNT:
+        rd = bc[vm->pc+1];
+        { uint32_t v = (uint32_t)get_reg(vm, rd); int c = 0;
+          while (v) { c += v & 1; v >>= 1; }
+          set_reg(vm, rd, c); }
+        return 2;
+    case OP_BITSCAN:
+        rd = bc[vm->pc+1];
+        { uint32_t v = (uint32_t)get_reg(vm, rd); int c = 0;
+          if (v == 0) { set_reg(vm, rd, 32); }
+          else { while (!(v & 0x80000000)) { v <<= 1; c++; } set_reg(vm, rd, c); } }
+        return 2;
+    case OP_BITREV:
+        rd = bc[vm->pc+1];
+        { uint32_t v = (uint32_t)get_reg(vm, rd), r = 0;
+          for (int i = 0; i < 32; i++) { r <<= 1; r |= (v >> i) & 1; }
+          set_reg(vm, rd, (int32_t)r); }
+        return 2;
+    case OP_ROTL:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        { uint32_t v = (uint32_t)get_reg(vm, rd); int s = get_reg(vm, rs1) & 31;
+          set_reg(vm, rd, (int32_t)((v << s) | (v >> (32 - s)))); }
+        return 4;
+    case OP_ROTR:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        { uint32_t v = (uint32_t)get_reg(vm, rd); int s = get_reg(vm, rs1) & 31;
+          set_reg(vm, rd, (int32_t)((v >> s) | (v << (32 - s)))); }
+        return 4;
+
     /* ═══ Format A: Extended System (0xF0-0xFF) ═══ */
     case OP_DUMP:    return 1; /* stub */
     case OP_PROFILE: return 1; /* stub */
