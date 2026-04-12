@@ -63,7 +63,6 @@ int flux_format_size(uint8_t opcode) {
     /* 0xF0-0xFF: Debug — Format A */
     return 1;
 }
-}
 
 void flux_vm_init(FluxVM* vm) {
     memset(vm, 0, sizeof(FluxVM));
