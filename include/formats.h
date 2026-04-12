@@ -219,6 +219,37 @@
 #define OP_BDEP      0xE6  /* Format G: rd = deposit_bits(rs1, imm16) */
 #define OP_MERGE     0xE7  /* Format E: rd,rs1 -> merge flags from rs1 into rd */
 
+
+/* ── Trust Extended (0xC8-0xCF) ── */
+#define OP_TRUST_AVERAGE   0xC8  /* Format E: rd,rs1 -> rd = (rd + rs1) / 2 */
+#define OP_TRUST_BOOST     0xC9  /* Format E: rd,rs1 -> rd = min(rd + rs1, 1000) */
+#define OP_TRUST_WEAKEN    0xCA  /* Format E: rd,rs1 -> rd = max(rd - rs1, 0) */
+#define OP_TRUST_VERIFY    0xCB  /* Format E: rd,rs1 -> zero_flag = (rd >= rs1 threshold) */
+#define OP_TRUST_TRANSFER  0xCC  /* Format E: rd,rs1 -> rd += rs1 (credit transfer) */
+#define OP_TRUST_SEED      0xCD  /* Format F: rd = trust seed from entropy(imm16) */
+#define OP_TRUST_SCOPE     0xCE  /* Format E: rd,rs1 -> rd = min(rd, scope_of_rs1) */
+#define OP_TRUST_FLOOR     0xCF  /* Format E: rd,rs1 -> rd = max(rd, rs1) — trust floor */
+
+/* ── Memory Extended (0xD8-0xDF) ── */
+#define OP_MEMSCAN         0xD8  /* Format G: scan mem[rs1..rs1+imm16] for rd, -> zero_flag if found */
+#define OP_MEMINDEX        0xD9  /* Format G: find first nonzero in mem[rs1..rs1+imm16], -> rd=index */
+#define OP_MEMSUM          0xDA  /* Format G: sum imm16 bytes at mem[rs1], -> rd */
+#define OP_MEMRANGE_MIN    0xDB  /* Format G: min of imm16 bytes at mem[rs1], -> rd */
+#define OP_MEMRANGE_MAX    0xDC  /* Format G: max of imm16 bytes at mem[rs1], -> rd */
+#define OP_STACKFRAME      0xDD  /* Format F: push frame pointer + allocate imm16 locals */
+#define OP_HEAP_ALLOC      0xDE  /* Format F: rd = heap_alloc(imm16), returns offset */
+#define OP_HEAP_FREE       0xDF  /* Format B: heap_free(rd) */
+
+/* ── Time & Random (0xE8-0xEF) ── */
+#define OP_RAND_RANGE      0xE8  /* Format E: rd = random in [0, rs1) */
+#define OP_RAND_WEIGHTED   0xE9  /* Format E: rd = weighted random using mem[rs1..rs1+rs2] as weights */
+#define OP_CYCLE_READ      0xEA  /* Format B: rd = vm.cycles */
+#define OP_ALARM_SET       0xEB  /* Format F: if cycles >= alarm_imm16, trigger fault */
+#define OP_CRC32           0xEC  /* Format G: rd = CRC32 of mem[rs1..rs1+imm16] */
+#define OP_ENCODE_VARINT   0xED  /* Format F: encode rd as varint to mem[imm16], -> rd=bytes written */
+#define OP_DECODE_VARINT   0xEE  /* Format F: decode varint from mem[imm16], -> rd=value */
+#define OP_ATOMIC_CAS      0xEF  /* Format E: if mem[rd] == rs1, mem[rd] = rs2, -> zero_flag = success */
+
 /* ── Format A: Extended System/Debug (0xF0-0xFF) ── */
 #define OP_DUMP     0xF0
 #define OP_PROFILE  0xF1
