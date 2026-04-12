@@ -31,8 +31,15 @@ int flux_format_size(uint8_t opcode) {
     if (opcode <= 0x3F) return 4;  /* Format E */
     if (opcode <= 0x4F) return 4;  /* Format F */
     if (opcode <= 0x5F) return 5;  /* Format G */
-    /* 0x60+ all Format E (4 bytes) */
-    return 4;
+    /* 0x60-0x8F: Format E (4 bytes) */
+    if (opcode <= 0x8F) return 4;
+    /* 0x90-0x9F: Biology — Format E (4 bytes) */
+    if (opcode <= 0x9F) return 4;
+    /* 0xA0-0xAF: Extended Math — Format E (4 bytes) */
+    if (opcode <= 0xAF) return 4;
+    /* 0xB0-0xBF: Instinct — mixed */
+    if (opcode == 0xB2 || opcode == 0xB6 || opcode == 0xB7) return 2; /* Format B */
+    return 4; /* Format F for B0,B1,B3,B4,B5 */
 }
 
 void flux_vm_init(FluxVM* vm) {
