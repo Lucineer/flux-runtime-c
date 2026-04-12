@@ -514,7 +514,7 @@ int32_t flux_vm_step(FluxVM* vm, const uint8_t* bc, int32_t len) {
         rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
         { uint32_t val = (uint32_t)get_reg(vm, rd) & 0xFF;
           for (int32_t i = 0; i < imm16 && i < FLUX_MEMORY_SIZE; i++)
-              vm->memory[(imm16 + i) & (FLUX_MEMORY_SIZE-1)] = (uint8_t)val; }
+              vm->memory[i] = (uint8_t)val; }
         return 4;
     case OP_MEMSWAP:
         rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
