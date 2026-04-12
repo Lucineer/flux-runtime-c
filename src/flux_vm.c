@@ -54,12 +54,28 @@ int flux_format_size(uint8_t opcode) {
         if (opcode == 0xD6 || opcode == 0xD7) return 2;  /* Format B */
         return 5;  /* Format G */
     }
-    /* 0xE0-0xEF: Bit Manipulation — mixed */
-    if (opcode <= 0xEF) {
-        if (opcode <= 0xE2) return 2;  /* Format B */
-        if (opcode <= 0xE4) return 4;  /* Format E */
-        return 5;  /* Format G */
+    /* 0xC8-0xCF: Trust Extended — Format E */
+    if (opcode <= 0xCF) return 4;
+    /* 0xD0-0xDF: Memory Management — mixed */
+    if (opcode <= 0xD7) {
+        if (opcode == 0xD4) return 4;
+        if (opcode == 0xD6) return 2;
+        return 5;
     }
+    /* 0xD8-0xDF: Memory Extended — mixed */
+    if (opcode <= 0xDF) {
+        if (opcode == 0xDD) return 4; /* STACKFRAME */
+        if (opcode == 0xDE) return 4; /* HEAP_ALLOC */
+        if (opcode == 0xDF) return 2; /* HEAP_FREE */
+        return 5; /* D8-DC are Format G */
+    }
+    /* 0xE0-0xEF: Bit Manipulation + Time/Random — mixed */
+    if (opcode <= 0xE2) return 2;  /* BITCOUNT, BITSCAN, BITREV */
+    if (opcode <= 0xE4) return 4;  /* ROTL, ROTR */
+    if (opcode == 0xE5 || opcode == 0xE6 || opcode == 0xE7) return 5; /* BEXTR, BDEP, MERGE */
+    if (opcode == 0xEA || opcode == 0xEF) return 2; /* CYCLE_READ, ATOMIC_CAS */
+    if (opcode == 0xEB || opcode == 0xED || opcode == 0xEE) return 4; /* ALARM, VARINT */
+    return 5; /* E8, E9 (weighted), EC (CRC32) — Format G or 4 for E8/E9 */
     /* 0xF0-0xFF: Debug — Format A */
     return 1;
 }
@@ -548,6 +564,162 @@ int32_t flux_vm_step(FluxVM* vm, const uint8_t* bc, int32_t len) {
         rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
         { uint32_t v = (uint32_t)get_reg(vm, rd); int s = get_reg(vm, rs1) & 31;
           set_reg(vm, rd, (int32_t)((v >> s) | (v << (32 - s)))); }
+        return 4;
+
+
+    /* ═══ Trust Extended (0xC8-0xCF) ═══ */
+    case OP_TRUST_AVERAGE:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        set_reg(vm, rd, (get_reg(vm, rd) + get_reg(vm, rs1)) / 2);
+        return 4;
+    case OP_TRUST_BOOST:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        { int32_t s = get_reg(vm, rd) + get_reg(vm, rs1);
+          set_reg(vm, rd, s > 1000 ? 1000 : s); }
+        return 4;
+    case OP_TRUST_WEAKEN:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        { int32_t d = get_reg(vm, rd) - get_reg(vm, rs1);
+          set_reg(vm, rd, d < 0 ? 0 : d); }
+        return 4;
+    case OP_TRUST_VERIFY:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        vm->zero_flag = (get_reg(vm, rd) >= get_reg(vm, rs1)) ? 1 : 0;
+        return 4;
+    case OP_TRUST_TRANSFER:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        set_reg(vm, rd, get_reg(vm, rd) + get_reg(vm, rs1));
+        return 4;
+    case OP_TRUST_SEED:
+        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
+        set_reg(vm, rd, (int32_t)(rand() % (imm16 > 0 ? imm16 : 1000)));
+        return 4;
+    case OP_TRUST_SCOPE:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        { int32_t scope = get_reg(vm, rs1); int32_t v = get_reg(vm, rd);
+          set_reg(vm, rd, (scope <= 0 || v <= scope) ? v : scope); }
+        return 4;
+    case OP_TRUST_FLOOR:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        { int32_t floor = get_reg(vm, rs1); int32_t v = get_reg(vm, rd);
+          set_reg(vm, rd, v > floor ? v : floor); }
+        return 4;
+
+    /* ═══ Memory Extended (0xD8-0xDF) ═══ */
+    case OP_MEMSCAN:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; imm16 = read_i16(bc, vm->pc+3);
+        { vm->zero_flag = 0; uint8_t target = (uint8_t)get_reg(vm, rd);
+          for (int32_t i = 0; i < imm16; i++)
+              if (vm->memory[(get_reg(vm,rs1)+i) & (FLUX_MEMORY_SIZE-1)] == target)
+              { vm->zero_flag = 1; break; } }
+        return 5;
+    case OP_MEMINDEX:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; imm16 = read_i16(bc, vm->pc+3);
+        { set_reg(vm, rd, -1);
+          for (int32_t i = 0; i < imm16; i++) {
+              int32_t addr = (get_reg(vm,rs1)+i) & (FLUX_MEMORY_SIZE-1);
+              if (vm->memory[addr] != 0) { set_reg(vm, rd, i); break; } } }
+        return 5;
+    case OP_MEMSUM:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; imm16 = read_i16(bc, vm->pc+3);
+        { int32_t s = 0; for (int32_t i = 0; i < imm16; i++)
+              s += vm->memory[(get_reg(vm,rs1)+i) & (FLUX_MEMORY_SIZE-1)];
+          set_reg(vm, rd, s); }
+        return 5;
+    case OP_MEMRANGE_MIN:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; imm16 = read_i16(bc, vm->pc+3);
+        { int32_t m = 255;
+          for (int32_t i = 0; i < imm16; i++) {
+              int32_t v = vm->memory[(get_reg(vm,rs1)+i) & (FLUX_MEMORY_SIZE-1)];
+              if (v < m) m = v; }
+          set_reg(vm, rd, m); }
+        return 5;
+    case OP_MEMRANGE_MAX:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; imm16 = read_i16(bc, vm->pc+3);
+        { int32_t m = 0;
+          for (int32_t i = 0; i < imm16; i++) {
+              int32_t v = vm->memory[(get_reg(vm,rs1)+i) & (FLUX_MEMORY_SIZE-1)];
+              if (v > m) m = v; }
+          set_reg(vm, rd, m); }
+        return 5;
+    case OP_STACKFRAME:
+        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
+        vm->stack[--vm->sp] = vm->gp[rd]; /* save frame pointer */
+        vm->gp[rd] = vm->sp; /* new frame */
+        return 4;
+    case OP_HEAP_ALLOC:
+        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
+        { static int32_t heap_ptr = 32768; /* heap starts at 32KB */
+          int32_t size = imm16 > 0 ? imm16 : 1;
+          if (heap_ptr + size <= FLUX_MEMORY_SIZE) {
+              set_reg(vm, rd, heap_ptr); heap_ptr += size;
+          } else { vm->faulted = true; vm->fault_code = 2; } }
+        return 4;
+    case OP_HEAP_FREE:
+        rd = bc[vm->pc+1];
+        /* Simple: no-op (arena allocator, free happens on reset) */
+        return 2;
+
+    /* ═══ Time & Random (0xE8-0xEF) ═══ */
+    case OP_RAND_RANGE:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        { int32_t range = get_reg(vm, rs1);
+          set_reg(vm, rd, range > 0 ? (int32_t)(rand() % range) : 0); }
+        return 4;
+    case OP_RAND_WEIGHTED:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; rs2 = bc[vm->pc+3];
+        { int32_t total = 0; int32_t count = get_reg(vm, rs2);
+          for (int i = 0; i < count; i++)
+              total += vm->memory[(get_reg(vm,rs1)+i) & (FLUX_MEMORY_SIZE-1)];
+          if (total > 0) { int32_t pick = rand() % total; int cumsum = 0;
+              for (int i = 0; i < count; i++) { cumsum += vm->memory[(get_reg(vm,rs1)+i)&(FLUX_MEMORY_SIZE-1)];
+                  if (cumsum > pick) { set_reg(vm, rd, i); break; } } } }
+        return 4;
+    case OP_CYCLE_READ:
+        rd = bc[vm->pc+1];
+        set_reg(vm, rd, vm->cycles);
+        return 2;
+    case OP_ALARM_SET:
+        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
+        /* stub: would trigger fault when cycles reach alarm */
+        return 4;
+    case OP_CRC32:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; imm16 = read_i16(bc, vm->pc+3);
+        { uint32_t crc = 0xFFFFFFFF;
+          for (int32_t i = 0; i < imm16; i++) {
+              uint8_t byte = vm->memory[(get_reg(vm,rs1)+i) & (FLUX_MEMORY_SIZE-1)];
+              crc ^= byte;
+              for (int b = 0; b < 8; b++)
+                  crc = (crc >> 1) ^ (0xEDB88320 & (-(crc & 1)));
+          }
+          set_reg(vm, rd, (int32_t)(crc ^ 0xFFFFFFFF)); }
+        return 5;
+    case OP_ENCODE_VARINT:
+        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
+        { int32_t val = get_reg(vm, rd); int written = 0;
+          do { uint8_t byte = val & 0x7F; val >>= 7;
+              if (val) byte |= 0x80;
+              vm->memory[(imm16 + written) & (FLUX_MEMORY_SIZE-1)] = byte;
+              written++; } while (val);
+          set_reg(vm, rd, written); }
+        return 4;
+    case OP_DECODE_VARINT:
+        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
+        { int32_t result = 0; int shift = 0;
+          for (int i = 0; i < 5; i++) {
+              uint8_t byte = vm->memory[(imm16 + i) & (FLUX_MEMORY_SIZE-1)];
+              result |= (int32_t)(byte & 0x7F) << shift;
+              if (!(byte & 0x80)) break;
+              shift += 7; }
+          set_reg(vm, rd, result); }
+        return 4;
+    case OP_ATOMIC_CAS:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; rs2 = bc[vm->pc+3];
+        { int32_t addr = get_reg(vm, rd);
+          /* CAS: if mem[addr] == rs1, mem[addr] = rs2 */
+          /* Simplified single-threaded */
+          vm->zero_flag = (vm->memory[addr & (FLUX_MEMORY_SIZE-1)] == (uint8_t)get_reg(vm, rs1)) ? 1 : 0;
+          if (vm->zero_flag) vm->memory[addr & (FLUX_MEMORY_SIZE-1)] = (uint8_t)get_reg(vm, rs2); }
         return 4;
 
     /* ═══ Format A: Extended System (0xF0-0xFF) ═══ */
