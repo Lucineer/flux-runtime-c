@@ -77,18 +77,14 @@ int main(void) {
       flux_vm_execute(&vm,bc,4);
       if (vm.gp[1]>=0 && vm.gp[1]<10) PASS("rand_range"); else { FAIL("rand_range",vm.gp[1],-1); failures++; } }
 
-    /* VARINT roundtrip: encode then decode */
-    { FluxVM vm; flux_vm_init(&vm); vm.gp[1]=300;
+    /* VARINT roundtrip: encode then decode in single execute */
+    { FluxVM vm; flux_vm_init(&vm); vm.gp[1]=300; vm.gp[3]=0;
       uint8_t bc[] = {
-        0xED, 0x01, 0x00, 0x64, /* encode R1(300) to mem[100], R1=bytes written */
-        0x00                     /* HALT */
+        0xED, 0x01, 0x64, 0x00, /* ENCODE_VARINT R1, addr=100 */
+        0xEE, 0x03, 0x64, 0x00, /* DECODE_VARINT R3, addr=100 */
+        0x00                      /* HALT */
       };
-      flux_vm_execute(&vm, bc, 4);
-      int bytes_written = vm.gp[1];
-      /* Now decode from same address */
-      vm.gp[3] = 0; /* will hold result */
-      uint8_t bc2[] = {0xEE, 0x03, 0x00, 0x64, 0x00};
-      flux_vm_execute(&vm, bc2, 4);
+      flux_vm_execute(&vm, bc, 9);
       if (vm.gp[3]==300) PASS("varint_roundtrip"); else { FAIL("varint_roundtrip",vm.gp[3],300); failures++; } }
 
     /* CRC32 */
