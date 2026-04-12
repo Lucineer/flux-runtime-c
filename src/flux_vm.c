@@ -1,8 +1,7 @@
-/* flux_vm.c — FLUX Unified Virtual Machine (FORMAT_A-G)
+/* flux_vm.c — FLUX Unified Virtual Machine (ISA v2 Format)
  *
- * Converged VM from Oracle1 + JetsonClaw1
+ * Opcode encoding matches formats.py ISA v2 Format spec.
  * 64 registers, 64KB memory, 256-entry stack
- * ~150 implemented opcodes across 7 format widths
  * Zero dependencies, C11, -Werror clean on ARM64
  */
 #include "flux_vm.h"
@@ -22,21 +21,25 @@ static uint16_t read_u16(const uint8_t* bc, int32_t pos) {
 
 static int32_t sign_ext8(int8_t val) { return (int32_t)val; }
 
-/* Format size lookup — determines instruction byte width */
+/* Format size lookup — ISA v2 Format encoding */
 int flux_format_size(uint8_t opcode) {
-    if (opcode <= 0x07) return 1;  /* Format A */
-    if (opcode <= 0x0F) return 2;  /* Format B */
-    if (opcode <= 0x17) return 2;  /* Format C */
-    if (opcode <= 0x1F) return 3;  /* Format D */
-    if (opcode <= 0x3F) return 4;  /* Format E */
-    if (opcode <= 0x4F) return 4;  /* Format F */
-    if (opcode <= 0x5F) return 5;  /* Format G */
-    if (opcode <= 0x9F) return 4;  /* A2A, Conf, VP, Bio, ExtMath */
+    if (opcode <= 0x03) return 1;  /* Format A: [op] */
+    if (opcode <= 0x07) return 1;  /* Format A extension (BRK, WFI, RESET, SYN) */
+    if (opcode <= 0x0F) return 2;  /* Format B: [op, rd] */
+    if (opcode <= 0x17) return 2;  /* Format C: [op, rd, imm8] but treated as 2 for SYS etc */
+    if (opcode <= 0x1F) return 3;  /* Format D: [op, rd, imm8] */
+    if (opcode <= 0x3F) return 4;  /* Format E/F: [op, rd, rs1, rs2] */
+    if (opcode <= 0x4F) return 4;  /* Format G: [op, rd, lo, hi] */
+    if (opcode <= 0x5F) return 5;  /* Format H: [op, rd, rs1, lo, hi] */
+    if (opcode <= 0x7F) return 4;  /* Agent ops, Confidence ops: 3-reg */
+    /* 0x80-0x8F: CONF fused — 5 bytes [op, rd, crd, rs1, rs2] */
+    if (opcode <= 0x8F) return 5;
+    if (opcode <= 0x9F) return 4;  /* Bio/Sensor: 3-reg or 2-reg */
     if (opcode <= 0xAF) return 4;  /* Extended Math */
     /* 0xB0-0xBF: Instinct — mixed */
     if (opcode <= 0xBF) {
         switch (opcode) {
-            case 0xB2: case 0xB6: case 0xB7: case 0xB8: case 0xB9: return 2;
+            case 0xB2: case 0xB5: case 0xB6: case 0xB7: case 0xB8: case 0xB9: return 2;
             default: return 4;
         }
     }
@@ -45,25 +48,15 @@ int flux_format_size(uint8_t opcode) {
         if (opcode == 0xC2 || opcode == 0xC5) return 2;
         return 4;
     }
-    /* 0xD0-0xD4: Memory — mixed */
-    if (opcode <= 0xD4) {
-        if (opcode == 0xD4) return 4;  /* MEMSWAP */
-        return 5;  /* D0-D3: Format G */
-    }
-    /* 0xD5-0xDF: Memory Extended — mixed */
-    if (opcode <= 0xDF) {
-        if (opcode == 0xDD || opcode == 0xDE) return 4;
-        if (opcode == 0xDF) return 2;
-        return 5;
-    }
-    /* 0xE0-0xEF: Bit/Time — mixed */
+    /* 0xD0-0xDF: Memory — mapped to 0x50-0x56 above, but handle if encountered */
+    return 5;
+    /* 0xE0-0xEF: Bit/Time */
     if (opcode <= 0xE2) return 2;
     if (opcode <= 0xE4) return 4;
     if (opcode == 0xE5 || opcode == 0xE6 || opcode == 0xE7) return 5;
-    if (opcode == 0xE8 || opcode == 0xE9) return 4; /* RAND_RANGE, RAND_WEIGHTED */
-    if (opcode == 0xEA || opcode == 0xEF) return 2; /* CYCLE_READ, ATOMIC_CAS */
+    if (opcode == 0xE8 || opcode == 0xE9) return 4;
+    if (opcode == 0xEA || opcode == 0xEF) return 2;
     if (opcode == 0xEB || opcode == 0xED || opcode == 0xEE) return 4;
-    return 5;  /* EC: CRC32 is Format G */
     /* 0xF0-0xFF: Debug */
     return 1;
 }
@@ -126,7 +119,7 @@ int32_t flux_vm_step(FluxVM* vm, const uint8_t* bc, int32_t len) {
     int16_t imm16;
 
     switch (op) {
-    /* ═══ Format A: System Control ═══ */
+    /* ═══ Format A: System Control (0x00-0x07) ═══ */
     case OP_HALT: vm->halted = true; return 1;
     case OP_NOP: return 1;
     case OP_RET:
@@ -138,7 +131,7 @@ int32_t flux_vm_step(FluxVM* vm, const uint8_t* bc, int32_t len) {
     case OP_RESET: memset(vm->gp, 0, sizeof(vm->gp)); return 1;
     case OP_SYN: return 1; /* memory barrier — no-op in single-threaded */
 
-    /* ═══ Format B: Single Register ═══ */
+    /* ═══ Format B: Single Register (0x08-0x0F) ═══ */
     case OP_INC: rd = bc[vm->pc+1]; set_reg(vm,rd,get_reg(vm,rd)+1); update_flags(vm,get_reg(vm,rd)); return 2;
     case OP_DEC: rd = bc[vm->pc+1]; set_reg(vm,rd,get_reg(vm,rd)-1); update_flags(vm,get_reg(vm,rd)); return 2;
     case OP_NOT: rd = bc[vm->pc+1]; set_reg(vm,rd,~get_reg(vm,rd)); return 2;
@@ -148,7 +141,7 @@ int32_t flux_vm_step(FluxVM* vm, const uint8_t* bc, int32_t len) {
     case OP_CONF_LD: rd = bc[vm->pc+1]; set_reg(vm,rd,vm->conf[rd & 0x3F]); return 2;
     case OP_CONF_ST: rd = bc[vm->pc+1]; vm->conf[rd & 0x3F] = get_reg(vm,rd); return 2;
 
-    /* ═══ Format C: Immediate8 ═══ */
+    /* ═══ Format C: Syscall/Control (0x10-0x17) ═══ */
     case OP_SYS: return 2; /* stub */
     case OP_TRAP: return 2; /* stub */
     case OP_DBG: { rd = bc[vm->pc+1]; fprintf(stderr,"DBG r%d = %d\n", rd, get_reg(vm,rd)); return 2; }
@@ -156,9 +149,9 @@ int32_t flux_vm_step(FluxVM* vm, const uint8_t* bc, int32_t len) {
     case OP_SEMA: return 2; /* stub */
     case OP_YIELD: return 2;
     case OP_CACHE: return 2; /* stub */
-    case OP_STRIPCF: vm->stripconf_remaining = bc[vm->pc+1]; return 2;
+    case OP_STRIPCONF: vm->stripconf_remaining = bc[vm->pc+1]; return 2;
 
-    /* ═══ Format D: Register + Imm8 ═══ */
+    /* ═══ Format D: Register + Imm8 (0x18-0x1F) ═══ */
     case OP_MOVI:  rd = bc[vm->pc+1]; imm8 = (int8_t)bc[vm->pc+2]; set_reg(vm,rd,sign_ext8(imm8)); return 3;
     case OP_ADDI:  rd = bc[vm->pc+1]; imm8 = (int8_t)bc[vm->pc+2]; set_reg(vm,rd,get_reg(vm,rd)+imm8); update_flags(vm,get_reg(vm,rd)); return 3;
     case OP_SUBI:  rd = bc[vm->pc+1]; imm8 = (int8_t)bc[vm->pc+2]; set_reg(vm,rd,get_reg(vm,rd)-imm8); update_flags(vm,get_reg(vm,rd)); return 3;
@@ -168,7 +161,7 @@ int32_t flux_vm_step(FluxVM* vm, const uint8_t* bc, int32_t len) {
     case OP_SHLI:  rd = bc[vm->pc+1]; set_reg(vm,rd,get_reg(vm,rd)<<bc[vm->pc+2]); return 3;
     case OP_SHRI:  rd = bc[vm->pc+1]; set_reg(vm,rd,get_reg(vm,rd)>>(bc[vm->pc+2]&0x1F)); return 3;
 
-    /* ═══ Format E: 3-Register Arithmetic ═══ */
+    /* ═══ Format E: 3-Register ALU (0x20-0x2F) ═══ */
     case OP_ADD:    rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3]; set_reg(vm,rd,get_reg(vm,rs1)+get_reg(vm,rs2)); update_flags(vm,get_reg(vm,rd)); return 4;
     case OP_SUB:    rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3]; set_reg(vm,rd,get_reg(vm,rs1)-get_reg(vm,rs2)); update_flags(vm,get_reg(vm,rd)); return 4;
     case OP_MUL:    rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3]; set_reg(vm,rd,get_reg(vm,rs1)*get_reg(vm,rs2)); update_flags(vm,get_reg(vm,rd)); return 4;
@@ -186,7 +179,7 @@ int32_t flux_vm_step(FluxVM* vm, const uint8_t* bc, int32_t len) {
     case OP_CMP_GT: rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3]; set_reg(vm,rd,get_reg(vm,rs1)>get_reg(vm,rs2)?1:0); return 4;
     case OP_CMP_NE: rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3]; set_reg(vm,rd,get_reg(vm,rs1)!=get_reg(vm,rs2)?1:0); return 4;
 
-    /* ═══ Format E: Float/Memory/Control (0x30-0x3F) ═══ */
+    /* ═══ Format F: Float/Memory/Branch (0x30-0x3F) ═══ */
     case OP_FADD: rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3]; vm->fp[rd&0x3F]=vm->fp[rs1&0x3F]+vm->fp[rs2&0x3F]; return 4;
     case OP_FSUB: rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3]; vm->fp[rd&0x3F]=vm->fp[rs1&0x3F]-vm->fp[rs2&0x3F]; return 4;
     case OP_FMUL: rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3]; vm->fp[rd&0x3F]=vm->fp[rs1&0x3F]*vm->fp[rs2&0x3F]; return 4;
@@ -220,7 +213,7 @@ int32_t flux_vm_step(FluxVM* vm, const uint8_t* bc, int32_t len) {
     case OP_JLT: rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; if(get_reg(vm,rd)<0) { vm->pc += get_reg(vm,rs1); return 0; } return 4;
     case OP_JGT: rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; if(get_reg(vm,rd)>0) { vm->pc += get_reg(vm,rs1); return 0; } return 4;
 
-    /* ═══ Format F: Register + Imm16 (0x40-0x4F) ═══ */
+    /* ═══ Format G: 16-bit Immediate (0x40-0x4F) ═══ */
     case OP_MOVI16: rd=bc[vm->pc+1]; set_reg(vm,rd,(int32_t)read_i16(bc,vm->pc+2)); return 4;
     case OP_ADDI16: rd=bc[vm->pc+1]; set_reg(vm,rd,get_reg(vm,rd)+(int32_t)read_i16(bc,vm->pc+2)); update_flags(vm,get_reg(vm,rd)); return 4;
     case OP_SUBI16: rd=bc[vm->pc+1]; set_reg(vm,rd,get_reg(vm,rd)-(int32_t)read_i16(bc,vm->pc+2)); update_flags(vm,get_reg(vm,rd)); return 4;
@@ -232,18 +225,18 @@ int32_t flux_vm_step(FluxVM* vm, const uint8_t* bc, int32_t len) {
     case OP_JNE: rd=bc[vm->pc+1]; imm16=read_i16(bc,vm->pc+2); if(get_reg(vm,rd)!=0) { vm->pc += (int32_t)imm16; return 0; } return 4;
     case OP_JLE: rd=bc[vm->pc+1]; imm16=read_i16(bc,vm->pc+2); if(get_reg(vm,rd)<=0) { vm->pc += (int32_t)imm16; return 0; } return 4;
     case OP_JGE: rd=bc[vm->pc+1]; imm16=read_i16(bc,vm->pc+2); if(get_reg(vm,rd)>=0) { vm->pc += (int32_t)imm16; return 0; } return 4;
-    case OP_LDI8: { /* rd = mem[imm16] (1 byte) */
+    case OP_LDI8: {
         rd=bc[vm->pc+1]; uint16_t addr=read_u16(bc,vm->pc+2);
         set_reg(vm,rd,(int32_t)vm->memory[addr&0xFFFF]);
         return 4;
     }
-    case OP_STI8: { /* mem[imm16] = rd (1 byte) */
+    case OP_STI8: {
         rd=bc[vm->pc+1]; uint16_t addr=read_u16(bc,vm->pc+2);
         vm->memory[addr&0xFFFF] = (uint8_t)(get_reg(vm,rd)&0xFF);
         return 4;
     }
 
-    /* ═══ Format G: Reg + Reg + Imm16 (0x50-0x5F) ═══ */
+    /* ═══ Format H: Reg + Reg + Imm16 (0x50-0x5F) ═══ */
     case OP_LOADI: {
         rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; imm16=read_i16(bc,vm->pc+3);
         int32_t addr = (get_reg(vm,rs1)+(int32_t)imm16) & 0xFFFF;
@@ -262,240 +255,6 @@ int32_t flux_vm_step(FluxVM* vm, const uint8_t* bc, int32_t len) {
         vm->memory[(addr+3)&0xFFFF] = (uint8_t)((val>>24)&0xFF);
         return 5;
     }
-
-    /* ═══ Format E: Agent-to-Agent (0x60-0x6F) ═══ */
-    /* A2A ops are stubs — real implementation requires fleet runtime */
-    case OP_TELL:      return 4; /* stub: send message to agent in rd */
-    case OP_ASK:       return 4; /* stub: query agent in rd */
-    case OP_DELEGATE:  return 4; /* stub: delegate task */
-    case OP_BROADCAST: return 4; /* stub: broadcast to fleet */
-    case OP_REDUCE:    return 4; /* stub: reduce from fleet */
-    case OP_REPLY:     return 4; /* stub: reply to last message */
-    case OP_FORWARD:   return 4; /* stub: forward message */
-    case OP_LISTEN:    return 4; /* stub: wait for incoming */
-    case OP_FORK:      { /* spawn: push return addr, clear pc conceptually */
-        rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3];
-        set_reg(vm,rd,vm->agent_id); /* child gets parent's ID */
-        vm->cycles += 10; /* fork is expensive */
-        return 4;
-    }
-    case OP_JOIN:      { /* join: wait for child */
-        rd=bc[vm->pc+1]; rs1=bc[vm->pc+2];
-        vm->cycles += 5;
-        return 4;
-    }
-    case OP_WAIT:      return 4; /* stub */
-    case OP_SIGNAL:    return 4; /* stub */
-
-    /* ═══ Format E: Confidence-aware (0x70-0x7F) ═══ */
-    case OP_CONF_ADD: {
-        rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3];
-        if (use_conf) {
-            /* Harmonic mean: 2*a*b/(a+b), clamped to [0,100] */
-            int32_t a = vm->conf[rs1&0x3F], b = vm->conf[rs2&0x3F];
-            int32_t sum = a + b;
-            int32_t result = (sum > 0) ? (2*a*b/sum) : 0;
-            vm->conf[rd&0x3F] = result > 100 ? 100 : result;
-        }
-        set_reg(vm,rd,get_reg(vm,rs1)+get_reg(vm,rs2));
-        return 4;
-    }
-    case OP_CONF_SUB: {
-        rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3];
-        if (use_conf) {
-            int32_t a = vm->conf[rs1&0x3F], b = vm->conf[rs2&0x3F];
-            vm->conf[rd&0x3F] = (a > b) ? (a - b) : 0;
-        }
-        set_reg(vm,rd,get_reg(vm,rs1)-get_reg(vm,rs2));
-        return 4;
-    }
-    case OP_CONF_MUL: {
-        rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3];
-        if (use_conf) {
-            int32_t a = vm->conf[rs1&0x3F], b = vm->conf[rs2&0x3F];
-            int32_t result = a * b / 100;
-            vm->conf[rd&0x3F] = result > 100 ? 100 : result;
-        }
-        set_reg(vm,rd,get_reg(vm,rs1)*get_reg(vm,rs2));
-        return 4;
-    }
-    case OP_CONF_MERGE: {
-        /* Average of confidence registers */
-        rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3];
-        if (use_conf) {
-            vm->conf[rd&0x3F] = (vm->conf[rs1&0x3F] + vm->conf[rs2&0x3F]) / 2;
-        }
-        return 4;
-    }
-    case OP_CONF_FUSE: {
-        /* Bayesian fusion: weighted average */
-        rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3];
-        if (use_conf) {
-            int32_t w1 = vm->conf[rs1&0x3F], w2 = vm->conf[rs2&0x3F];
-            int32_t total = w1 + w2;
-            vm->conf[rd&0x3F] = (total > 0) ? (get_reg(vm,rs1)*w1 + get_reg(vm,rs2)*w2) / total : 0;
-        }
-        return 4;
-    }
-    case OP_CONF_CHAIN: { rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3]; if(use_conf) vm->conf[rd&0x3F]=vm->conf[rs1&0x3F]*vm->conf[rs2&0x3F]/100; return 4; }
-    case OP_CONF_SET:  { rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; vm->conf[rd&0x3F]=get_reg(vm,rs1); return 4; }
-    case OP_CONF_GET:  { rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; set_reg(vm,rd,vm->conf[rs1&0x3F]); return 4; }
-    case OP_CONF_CLAMP:{ rd=bc[vm->pc+1]; { int32_t c=vm->conf[rd&0x3F]; vm->conf[rd&0x3F]=c<0?0:c>100?100:c; } return 4; }
-    case OP_CONF_DECAY:{ rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; if(use_conf) vm->conf[rd&0x3F]=vm->conf[rd&0x3F]*get_reg(vm,rs1)/100; return 4; }
-
-    /* ═══ Format E: Biology/Sensor (0x90-0x9F) ═══ */
-    case OP_SENSE:     set_reg(vm,bc[vm->pc+1],0); return 4; /* stub */
-    case OP_GPS:       set_reg(vm,bc[vm->pc+1],0); return 4; /* stub */
-    case OP_ACCEL:     set_reg(vm,bc[vm->pc+1],0); return 4; /* stub */
-    case OP_GYRO:      set_reg(vm,bc[vm->pc+1],0); return 4; /* stub */
-    case OP_TEMP:      set_reg(vm,bc[vm->pc+1],0); return 4; /* stub */
-    case OP_VOLT:      set_reg(vm,bc[vm->pc+1],0); return 4; /* stub */
-    case OP_ATP_GEN:   set_reg(vm,bc[vm->pc+1],100); return 4; /* generate 100 ATP */
-    case OP_ATP_USE:   { rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; set_reg(vm,rd,get_reg(vm,rd)-get_reg(vm,rs1)); return 4; }
-    case OP_APOPTOSIS: vm->halted=true; vm->fault_code=99; return 4; /* graceful self-termination */
-
-    /* ═══ Format E: Extended Math (0xA0-0xAF) ═══ */
-    case OP_ABS:   rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; { int32_t v=get_reg(vm,rs1); set_reg(vm,rd,v<0?-v:v); } return 4;
-    case OP_SQRT:  rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; set_reg(vm,rd,(int32_t)sqrtf((float)fabs((double)get_reg(vm,rs1)))); return 4;
-    case OP_POW:   rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3]; set_reg(vm,rd,(int32_t)powf((float)get_reg(vm,rs1),(float)get_reg(vm,rs2))); return 4;
-    case OP_LOG:   rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; set_reg(vm,rd,(int32_t)logf((float)fabs((double)get_reg(vm,rs1)))); return 4;
-    case OP_RAND:  rd=bc[vm->pc+1]; set_reg(vm,rd,rand()); return 4;
-    case OP_CLAMP: { rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3]; int32_t v=get_reg(vm,rd); set_reg(vm,rd,v<get_reg(vm,rs1)?get_reg(vm,rs1):(v>get_reg(vm,rs2)?get_reg(vm,rs2):v)); return 4; }
-    case OP_LERP:  { rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3]; set_reg(vm,rd,get_reg(vm,rs1)+(get_reg(vm,rs2)-get_reg(vm,rs1))*get_reg(vm,rd)/100); return 4; }
-    case OP_HASH:  { rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; uint32_t h=(uint32_t)get_reg(vm,rs1); h=((h>>16)^h)*0x45d9f3b; h=((h>>16)^h)*0x45d9f3b; h=(h>>16)^h; set_reg(vm,rd,(int32_t)h); return 4; }
-
-    /* ═══ Instinct Opcodes (0xB0-0xB7) ═══ */
-    /* Format F: 4 bytes (op rd imm16_lo imm16_hi) */
-    case OP_ISTINCT_LOAD:
-        rd = bc[vm->pc+1];
-        imm16 = read_i16(bc, vm->pc+2);
-        set_reg(vm, rd, vm->memory[imm16 & (FLUX_MEMORY_SIZE-1)]);
-        return 4;
-    case OP_ISTINCT_STORE:
-        rd = bc[vm->pc+1];
-        imm16 = read_i16(bc, vm->pc+2);
-        vm->memory[imm16 & (FLUX_MEMORY_SIZE-1)] = get_reg(vm, rd);
-        return 4;
-    case OP_ISTINCT_REFLEX:
-        rd = bc[vm->pc+1];
-        imm16 = read_i16(bc, vm->pc+2);
-        if (get_reg(vm, rd) > 0) {
-            set_reg(vm, rd, get_reg(vm, rd) - 1);
-            vm->pc = imm16;
-            return 0; /* jump */
-        }
-        return 4;
-    case OP_ISTINCT_MODULATE:
-        rd = bc[vm->pc+1];
-        rs1 = bc[vm->pc+2]; /* reused as factor high byte */
-        imm16 = read_i16(bc, vm->pc+2);
-        set_reg(vm, rd, (int32_t)((int64_t)get_reg(vm, rd) * imm16 / 1000));
-        return 4;
-    case OP_ISTINCT_THRESHOLD:
-        rd = bc[vm->pc+1];
-        imm16 = read_i16(bc, vm->pc+2);
-        set_reg(vm, rd, (get_reg(vm, rd) >= imm16) ? 1 : 0);
-        return 4;
-    /* Format B: 2 bytes (op rd) */
-    case OP_ISTINCT_DECAY:
-        rd = bc[vm->pc+1];
-        set_reg(vm, rd, (int32_t)(get_reg(vm, rd) * 0.95f));
-        return 2;
-    case OP_ISTINCT_CONVERGE:
-        rd = bc[vm->pc+1];
-        { int32_t sum = 0, count = 0, base_r = (rd / 8) * 8;
-          for (int i = base_r; i < base_r + 8 && i < FLUX_NUM_REGS; i++)
-              if (i != rd && i != 0) { sum += vm->gp[i]; count++; }
-          if (count > 0) { int32_t avg = sum / count;
-            set_reg(vm, rd, get_reg(vm, rd) + (avg - get_reg(vm, rd)) / 4); }
-        }
-        return 2;
-    case OP_ISTINCT_EXTINCT:
-        rd = bc[vm->pc+1];
-        { int32_t val = get_reg(vm, rd);
-          if (val > -10 && val < 10) set_reg(vm, rd, 0); }
-        return 2;
-
-
-    /* ═══ Instinct Extended (0xB8-0xBF) ═══ */
-    case OP_ISTINCT_HABITUATE:
-        rd = bc[vm->pc+1];
-        { int32_t v = get_reg(vm, rd); set_reg(vm, rd, v < 255 ? v + 1 : 255); }
-        return 2;
-    case OP_ISTINCT_SENSITIZE:
-        rd = bc[vm->pc+1];
-        { int32_t v = get_reg(vm, rd); set_reg(vm, rd, v < 127 ? v * 2 : 255); }
-        return 2;
-    case OP_ISTINCT_GENERALIZE:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
-        set_reg(vm, rd, (get_reg(vm, rd) + get_reg(vm, rs1)) / 2);
-        return 4;
-    case OP_ISTINCT_SPECIALIZE:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
-        { int32_t diff = get_reg(vm, rd) - get_reg(vm, rs1);
-          if (diff > -50 && diff < 50) { /* stay */ }
-          else set_reg(vm, rd, 0); }
-        return 4;
-    case OP_ISTINCT_DIFFUSE:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
-        { int32_t total = get_reg(vm, rd);
-          int count = rs1 > 0 ? rs1 : 1;
-          int share = total / count;
-          for (int i = 1; i <= rs1 && i < FLUX_NUM_REGS; i++)
-              set_reg(vm, i, get_reg(vm, i) + share);
-          set_reg(vm, rd, total - share * count); }
-        return 4;
-    case OP_ISTINCT_INHIBIT:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
-        if (get_reg(vm, rd) > 0) set_reg(vm, rs1, 0);
-        return 4;
-    case OP_ISTINCT_SUM:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
-        set_reg(vm, rd, get_reg(vm, rd) + get_reg(vm, rs1));
-        return 4;
-    case OP_ISTINCT_DIFF:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
-        set_reg(vm, rd, get_reg(vm, rd) - get_reg(vm, rs1));
-        return 4;
-
-    /* ═══ Trust Opcodes (0xC0-0xCF) ═══ */
-    case OP_TRUST_INIT:
-        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
-        set_reg(vm, rd, imm16);
-        return 4;
-    case OP_TRUST_UPDATE:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
-        /* Bayesian: new_trust = old * (1 - evidence_weight) + evidence * evidence_weight */
-        { int32_t old_t = get_reg(vm, rd); int32_t evidence = get_reg(vm, rs1);
-          set_reg(vm, rd, old_t + (evidence - old_t) / 10); }
-        return 4;
-    case OP_TRUST_DECAY:
-        rd = bc[vm->pc+1];
-        set_reg(vm, rd, (int32_t)(get_reg(vm, rd) * 0.99f));
-        return 2;
-    case OP_TRUST_COMPARE:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
-        vm->zero_flag = (get_reg(vm, rd) >= get_reg(vm, rs1)) ? 1 : 0;
-        return 4;
-    case OP_TRUST_MIN:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
-        { int32_t a = get_reg(vm, rd), b = get_reg(vm, rs1);
-          set_reg(vm, rd, a < b ? a : b); }
-        return 4;
-    case OP_TRUST_REVOKE:
-        rd = bc[vm->pc+1];
-        set_reg(vm, rd, 0);
-        return 2;
-    case OP_TRUST_RESTRICT:
-        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
-        { int32_t v = get_reg(vm, rd); set_reg(vm, rd, v < imm16 ? v : imm16); }
-        return 4;
-    case OP_TRUST_SCORE:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; rs2 = bc[vm->pc+3];
-        set_reg(vm, rd, (get_reg(vm, rs1) * 3 + get_reg(vm, rs2) * 7) / 10);
-        return 4;
-
-    /* ═══ Memory Management (0xD0-0xDF) ═══ */
     case OP_MEMSET:
         rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; imm16 = read_i16(bc, vm->pc+3);
         { uint32_t val = (uint32_t)get_reg(vm, rd) & 0xFF;
@@ -524,6 +283,271 @@ int32_t flux_vm_step(FluxVM* vm, const uint8_t* bc, int32_t len) {
     case OP_MEMSWAP:
         rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
         { int32_t tmp = get_reg(vm, rd); set_reg(vm, rd, get_reg(vm, rs1)); set_reg(vm, rs1, tmp); }
+        return 4;
+
+    /* ═══ Agent-to-Agent stubs (0x60-0x6F) ═══ */
+    case OP_TELL:      return 4;
+    case OP_ASK:       return 4;
+    case OP_DELEGATE:  return 4;
+    case OP_DELEGATE_RESULT: return 4;
+    case OP_BROADCAST: return 4;
+    case OP_REPLY:     return 4;
+    case OP_FORWARD:   return 4;
+    case OP_REDUCE:    return 4;
+    case OP_FORK:      {
+        rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3];
+        set_reg(vm,rd,vm->agent_id);
+        vm->cycles += 10;
+        return 4;
+    }
+    case OP_JOIN:      {
+        rd=bc[vm->pc+1]; rs1=bc[vm->pc+2];
+        vm->cycles += 5;
+        return 4;
+    }
+    case OP_WAIT:      return 4;
+    case OP_SIGNAL:    return 4;
+
+    /* ═══ Confidence-aware (0x70-0x7F) ═══ */
+    case OP_CONF_ADD: {
+        rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3];
+        if (use_conf) {
+            int32_t a = vm->conf[rs1&0x3F], b = vm->conf[rs2&0x3F];
+            int32_t sum = a + b;
+            int32_t result = (sum > 0) ? (2*a*b/sum) : 0;
+            vm->conf[rd&0x3F] = result > 100 ? 100 : result;
+        }
+        set_reg(vm,rd,get_reg(vm,rs1)+get_reg(vm,rs2));
+        return 4;
+    }
+    case OP_CONF_SUB: {
+        rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3];
+        if (use_conf) {
+            int32_t a = vm->conf[rs1&0x3F], b = vm->conf[rs2&0x3F];
+            vm->conf[rd&0x3F] = (a > b) ? (a - b) : 0;
+        }
+        set_reg(vm,rd,get_reg(vm,rs1)-get_reg(vm,rs2));
+        return 4;
+    }
+    case OP_CONF_MUL: {
+        rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3];
+        if (use_conf) {
+            int32_t a = vm->conf[rs1&0x3F], b = vm->conf[rs2&0x3F];
+            int32_t result = a * b / 100;
+            vm->conf[rd&0x3F] = result > 100 ? 100 : result;
+        }
+        set_reg(vm,rd,get_reg(vm,rs1)*get_reg(vm,rs2));
+        return 4;
+    }
+    case OP_CONF_MERGE: {
+        rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3];
+        if (use_conf) {
+            vm->conf[rd&0x3F] = (vm->conf[rs1&0x3F] + vm->conf[rs2&0x3F]) / 2;
+        }
+        return 4;
+    }
+    case OP_CONF_FUSE: {
+        rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3];
+        if (use_conf) {
+            int32_t w1 = vm->conf[rs1&0x3F], w2 = vm->conf[rs2&0x3F];
+            int32_t total = w1 + w2;
+            vm->conf[rd&0x3F] = (total > 0) ? (get_reg(vm,rs1)*w1 + get_reg(vm,rs2)*w2) / total : 0;
+        }
+        return 4;
+    }
+    case OP_CONF_CHAIN: { rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3]; if(use_conf) vm->conf[rd&0x3F]=vm->conf[rs1&0x3F]*vm->conf[rs2&0x3F]/100; return 4; }
+    case OP_CONF_SET:  { rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; vm->conf[rd&0x3F]=get_reg(vm,rs1); return 4; }
+    case OP_CONF_GET:  { rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; set_reg(vm,rd,vm->conf[rs1&0x3F]); return 4; }
+    case OP_CONF_CLAMP:{ rd=bc[vm->pc+1]; { int32_t c=vm->conf[rd&0x3F]; vm->conf[rd&0x3F]=c<0?0:c>100?100:c; } return 4; }
+    case OP_CONF_DECAY:{ rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; if(use_conf) vm->conf[rd&0x3F]=vm->conf[rd&0x3F]*get_reg(vm,rs1)/100; return 4; }
+    case OP_CONF_FOREACH: return 4; /* stub */
+
+    /* ═══ Format CONF: Confidence-fused (0x80-0x8F) — 5-byte [op, rd, crd, rs1, rs2] ═══ */
+    case OP_CF_ADD: {
+        rd=bc[vm->pc+1]; uint8_t crd=bc[vm->pc+2]; rs1=bc[vm->pc+3]; rs2=bc[vm->pc+4];
+        if (use_conf) {
+            float ca = vm->fconf[crd&0x3F], cb1 = vm->fconf[rs1&0x3F], cb2 = vm->fconf[rs2&0x3F];
+            vm->fconf[rd&0x3F] = 1.0f/(1.0f/ca + 1.0f/cb1 + 1.0f/cb2);
+        }
+        set_reg(vm,rd,get_reg(vm,rs1)+get_reg(vm,rs2));
+        return 5;
+    }
+    case OP_CF_SUB: case OP_CF_MUL: case OP_CF_DIV:
+    case OP_CF_MIN: case OP_CF_MAX: case OP_CF_AVG:
+    case OP_CF_LOAD: case OP_CF_STORE: case OP_CF_FUSE:
+    case OP_CF_CHAIN: case OP_CF_SELECT: case OP_CF_GATE:
+    case OP_CF_NORMALIZE: case OP_CF_SAMPLE: case OP_CF_RESET:
+        /* Stubs — decode 5 bytes, advance past */
+        return 5;
+
+    /* ═══ Biology/Sensor stubs (0x90-0x9F) ═══ */
+    case OP_SENSE:     set_reg(vm,bc[vm->pc+1],0); return 4;
+    case OP_GPS:       set_reg(vm,bc[vm->pc+1],0); return 4;
+    case OP_ACCEL:     set_reg(vm,bc[vm->pc+1],0); return 4;
+    case OP_GYRO:      set_reg(vm,bc[vm->pc+1],0); return 4;
+    case OP_TEMP:      set_reg(vm,bc[vm->pc+1],0); return 4;
+    case OP_VOLT:      set_reg(vm,bc[vm->pc+1],0); return 4;
+    case OP_ATP_GEN:   set_reg(vm,bc[vm->pc+1],100); return 4;
+    case OP_ATP_USE:   { rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; set_reg(vm,rd,get_reg(vm,rd)-get_reg(vm,rs1)); return 4; }
+    case OP_APOPTOSIS: vm->halted=true; vm->fault_code=99; return 4;
+    case OP_DIVIDE:    return 4; /* stub */
+
+    /* ═══ Extended Math (0xA0-0xAF) ═══ */
+    case OP_ABS:   rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; { int32_t v=get_reg(vm,rs1); set_reg(vm,rd,v<0?-v:v); } return 4;
+    case OP_SQRT:  rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; set_reg(vm,rd,(int32_t)sqrtf((float)fabs((double)get_reg(vm,rs1)))); return 4;
+    case OP_POW:   rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3]; set_reg(vm,rd,(int32_t)powf((float)get_reg(vm,rs1),(float)get_reg(vm,rs2))); return 4;
+    case OP_LOG:   rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; set_reg(vm,rd,(int32_t)logf((float)fabs((double)get_reg(vm,rs1)))); return 4;
+    case OP_RAND:  rd=bc[vm->pc+1]; set_reg(vm,rd,rand()); return 4;
+    case OP_CLAMP: { rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3]; int32_t v=get_reg(vm,rd); set_reg(vm,rd,v<get_reg(vm,rs1)?get_reg(vm,rs1):(v>get_reg(vm,rs2)?get_reg(vm,rs2):v)); return 4; }
+    case OP_LERP:  { rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; rs2=bc[vm->pc+3]; set_reg(vm,rd,get_reg(vm,rs1)+(get_reg(vm,rs2)-get_reg(vm,rs1))*get_reg(vm,rd)/100); return 4; }
+    case OP_HASH:  { rd=bc[vm->pc+1]; rs1=bc[vm->pc+2]; uint32_t h=(uint32_t)get_reg(vm,rs1); h=((h>>16)^h)*0x45d9f3b; h=((h>>16)^h)*0x45d9f3b; h=(h>>16)^h; set_reg(vm,rd,(int32_t)h); return 4; }
+
+    /* ═══ Instinct Opcodes (0xB0-0xBF) ═══ */
+    case OP_ISTINCT_LOAD:
+        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
+        set_reg(vm, rd, vm->memory[imm16 & (FLUX_MEMORY_SIZE-1)]);
+        return 4;
+    case OP_ISTINCT_STORE:
+        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
+        vm->memory[imm16 & (FLUX_MEMORY_SIZE-1)] = get_reg(vm, rd);
+        return 4;
+    case OP_ISTINCT_REFLEX:
+        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
+        if (get_reg(vm, rd) > 0) {
+            set_reg(vm, rd, get_reg(vm, rd) - 1);
+            vm->pc = imm16;
+            return 0;
+        }
+        return 4;
+    case OP_ISTINCT_MODULATE:
+        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
+        set_reg(vm, rd, (int32_t)((int64_t)get_reg(vm, rd) * imm16 / 1000));
+        return 4;
+    case OP_ISTINCT_THRESHOLD:
+        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
+        set_reg(vm, rd, (get_reg(vm, rd) >= imm16) ? 1 : 0);
+        return 4;
+    case OP_ISTINCT_DECAY:
+        rd = bc[vm->pc+1];
+        set_reg(vm, rd, (int32_t)(get_reg(vm, rd) * 0.95f));
+        return 2;
+    case OP_ISTINCT_CONVERGE:
+        rd = bc[vm->pc+1];
+        { int32_t sum = 0, count = 0, base_r = (rd / 8) * 8;
+          for (int i = base_r; i < base_r + 8 && i < FLUX_NUM_REGS; i++)
+              if (i != rd && i != 0) { sum += vm->gp[i]; count++; }
+          if (count > 0) { int32_t avg = sum / count;
+            set_reg(vm, rd, get_reg(vm, rd) + (avg - get_reg(vm, rd)) / 4); }
+        }
+        return 2;
+    case OP_ISTINCT_EXTINCT:
+        rd = bc[vm->pc+1];
+        { int32_t val = get_reg(vm, rd);
+          if (val > -10 && val < 10) set_reg(vm, rd, 0); }
+        return 2;
+    case OP_ISTINCT_HABITUATE:
+        rd = bc[vm->pc+1];
+        { int32_t v = get_reg(vm, rd); set_reg(vm, rd, v < 255 ? v + 1 : 255); }
+        return 2;
+    case OP_ISTINCT_SENSITIZE:
+        rd = bc[vm->pc+1];
+        { int32_t v = get_reg(vm, rd); set_reg(vm, rd, v < 127 ? v * 2 : 255); }
+        return 2;
+    case OP_ISTINCT_GENERALIZE:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        set_reg(vm, rd, (get_reg(vm, rd) + get_reg(vm, rs1)) / 2);
+        return 4;
+    case OP_ISTINCT_SPECIALIZE:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        { int32_t diff = get_reg(vm, rd) - get_reg(vm, rs1);
+          if (diff > -50 && diff < 50) { }
+          else set_reg(vm, rd, 0); }
+        return 4;
+    case OP_ISTINCT_DIFFUSE:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        { int32_t total = get_reg(vm, rd);
+          int count = rs1 > 0 ? rs1 : 1;
+          int share = total / count;
+          for (int i = 1; i <= rs1 && i < FLUX_NUM_REGS; i++)
+              set_reg(vm, i, get_reg(vm, i) + share);
+          set_reg(vm, rd, total - share * count); }
+        return 4;
+    case OP_ISTINCT_INHIBIT:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        if (get_reg(vm, rd) > 0) set_reg(vm, rs1, 0);
+        return 4;
+    case OP_ISTINCT_SUM:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        set_reg(vm, rd, get_reg(vm, rd) + get_reg(vm, rs1));
+        return 4;
+    case OP_ISTINCT_DIFF:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        set_reg(vm, rd, get_reg(vm, rd) - get_reg(vm, rs1));
+        return 4;
+
+    /* ═══ Trust Opcodes (0xC0-0xCE) ═══ */
+    case OP_TRUST_INIT:
+        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
+        set_reg(vm, rd, imm16);
+        return 4;
+    case OP_TRUST_UPDATE:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        { int32_t old_t = get_reg(vm, rd); int32_t evidence = get_reg(vm, rs1);
+          set_reg(vm, rd, old_t + (evidence - old_t) / 10); }
+        return 4;
+    case OP_TRUST_DECAY:
+        rd = bc[vm->pc+1];
+        set_reg(vm, rd, (int32_t)(get_reg(vm, rd) * 0.99f));
+        return 2;
+    case OP_TRUST_COMPARE:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        vm->zero_flag = (get_reg(vm, rd) >= get_reg(vm, rs1)) ? 1 : 0;
+        return 4;
+    case OP_TRUST_MIN:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        { int32_t a = get_reg(vm, rd), b = get_reg(vm, rs1);
+          set_reg(vm, rd, a < b ? a : b); }
+        return 4;
+    case OP_TRUST_REVOKE:
+        rd = bc[vm->pc+1]; set_reg(vm, rd, 0); return 2;
+    case OP_TRUST_RESTRICT:
+        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
+        { int32_t v = get_reg(vm, rd); set_reg(vm, rd, v < imm16 ? v : imm16); }
+        return 4;
+    case OP_TRUST_SCORE:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; rs2 = bc[vm->pc+3];
+        set_reg(vm, rd, (get_reg(vm, rs1) * 3 + get_reg(vm, rs2) * 7) / 10);
+        return 4;
+    case OP_TRUST_AVERAGE:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        set_reg(vm, rd, (get_reg(vm, rd) + get_reg(vm, rs1)) / 2);
+        return 4;
+    case OP_TRUST_BOOST:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        { int32_t s = get_reg(vm, rd) + get_reg(vm, rs1);
+          set_reg(vm, rd, s > 1000 ? 1000 : s); }
+        return 4;
+    case OP_TRUST_WEAKEN:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        { int32_t d = get_reg(vm, rd) - get_reg(vm, rs1);
+          set_reg(vm, rd, d < 0 ? 0 : d); }
+        return 4;
+    case OP_TRUST_VERIFY:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        vm->zero_flag = (get_reg(vm, rd) >= get_reg(vm, rs1)) ? 1 : 0;
+        return 4;
+    case OP_TRUST_TRANSFER:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        set_reg(vm, rd, get_reg(vm, rd) + get_reg(vm, rs1));
+        return 4;
+    case OP_TRUST_SEED:
+        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
+        set_reg(vm, rd, (int32_t)(rand() % (imm16 > 0 ? imm16 : 1000)));
+        return 4;
+    case OP_TRUST_SCOPE:
+        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
+        { int32_t scope = get_reg(vm, rs1); int32_t v = get_reg(vm, rd);
+          set_reg(vm, rd, (scope > 0) ? (v < scope ? v : scope) : v); }
         return 4;
 
     /* ═══ Bit Manipulation (0xE0-0xEF) ═══ */
@@ -555,170 +579,20 @@ int32_t flux_vm_step(FluxVM* vm, const uint8_t* bc, int32_t len) {
         { uint32_t v = (uint32_t)get_reg(vm, rd); int s = get_reg(vm, rs1) & 31;
           set_reg(vm, rd, (int32_t)((v >> s) | (v << (32 - s)))); }
         return 4;
+    case OP_RAND_RANGE: return 5;
+    case OP_RAND_WEIGHTED: return 5;
+    case OP_CYCLE_READ: return 2;
+    case OP_ATOMIC_CAS: return 4;
+    case OP_ATOMIC_SWAP: return 4;
+    case OP_CRC32: return 5;
 
+    /* ═══ Debug (0xF0-0xFF) ═══ */
+    case OP_DEBUG_BP: return 1;
 
-    /* ═══ Trust Extended (0xC8-0xCF) ═══ */
-    case OP_TRUST_AVERAGE:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
-        set_reg(vm, rd, (get_reg(vm, rd) + get_reg(vm, rs1)) / 2);
-        return 4;
-    case OP_TRUST_BOOST:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
-        { int32_t s = get_reg(vm, rd) + get_reg(vm, rs1);
-          set_reg(vm, rd, s > 1000 ? 1000 : s); }
-        return 4;
-    case OP_TRUST_WEAKEN:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
-        { int32_t d = get_reg(vm, rd) - get_reg(vm, rs1);
-          set_reg(vm, rd, d < 0 ? 0 : d); }
-        return 4;
-    case OP_TRUST_VERIFY:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
-        vm->zero_flag = (get_reg(vm, rd) >= get_reg(vm, rs1)) ? 1 : 0;
-        return 4;
-    case OP_TRUST_TRANSFER:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
-        set_reg(vm, rd, get_reg(vm, rd) + get_reg(vm, rs1));
-        return 4;
-    case OP_TRUST_SEED:
-        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
-        set_reg(vm, rd, (int32_t)(rand() % (imm16 > 0 ? imm16 : 1000)));
-        return 4;
-    case OP_TRUST_SCOPE:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
-        { int32_t scope = get_reg(vm, rs1); int32_t v = get_reg(vm, rd);
-          set_reg(vm, rd, (scope <= 0 || v <= scope) ? v : scope); }
-        return 4;
-    case OP_TRUST_FLOOR:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
-        { int32_t floor = get_reg(vm, rs1); int32_t v = get_reg(vm, rd);
-          set_reg(vm, rd, v > floor ? v : floor); }
-        return 4;
-
-    /* ═══ Memory Extended (0xD8-0xDF) ═══ */
-    case OP_MEMSCAN:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; imm16 = read_i16(bc, vm->pc+3);
-        { vm->zero_flag = 0; uint8_t target = (uint8_t)get_reg(vm, rd);
-          for (int32_t i = 0; i < imm16; i++)
-              if (vm->memory[(get_reg(vm,rs1)+i) & (FLUX_MEMORY_SIZE-1)] == target)
-              { vm->zero_flag = 1; break; } }
-        return 5;
-    case OP_MEMINDEX:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; imm16 = read_i16(bc, vm->pc+3);
-        { set_reg(vm, rd, -1);
-          for (int32_t i = 0; i < imm16; i++) {
-              int32_t addr = (get_reg(vm,rs1)+i) & (FLUX_MEMORY_SIZE-1);
-              if (vm->memory[addr] != 0) { set_reg(vm, rd, i); break; } } }
-        return 5;
-    case OP_MEMSUM:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; imm16 = read_i16(bc, vm->pc+3);
-        { int32_t s = 0; for (int32_t i = 0; i < imm16; i++)
-              s += vm->memory[(get_reg(vm,rs1)+i) & (FLUX_MEMORY_SIZE-1)];
-          set_reg(vm, rd, s); }
-        return 5;
-    case OP_MEMRANGE_MIN:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; imm16 = read_i16(bc, vm->pc+3);
-        { int32_t m = 255;
-          for (int32_t i = 0; i < imm16; i++) {
-              int32_t v = vm->memory[(get_reg(vm,rs1)+i) & (FLUX_MEMORY_SIZE-1)];
-              if (v < m) m = v; }
-          set_reg(vm, rd, m); }
-        return 5;
-    case OP_MEMRANGE_MAX:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; imm16 = read_i16(bc, vm->pc+3);
-        { int32_t m = 0;
-          for (int32_t i = 0; i < imm16; i++) {
-              int32_t v = vm->memory[(get_reg(vm,rs1)+i) & (FLUX_MEMORY_SIZE-1)];
-              if (v > m) m = v; }
-          set_reg(vm, rd, m); }
-        return 5;
-    case OP_STACKFRAME:
-        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
-        vm->stack[--vm->sp] = vm->gp[rd]; /* save frame pointer */
-        vm->gp[rd] = vm->sp; /* new frame */
-        return 4;
-    case OP_HEAP_ALLOC:
-        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
-        { static int32_t heap_ptr = 32768; /* heap starts at 32KB */
-          int32_t size = imm16 > 0 ? imm16 : 1;
-          if (heap_ptr + size <= FLUX_MEMORY_SIZE) {
-              set_reg(vm, rd, heap_ptr); heap_ptr += size;
-          } else { vm->faulted = true; vm->fault_code = 2; } }
-        return 4;
-    case OP_HEAP_FREE:
-        rd = bc[vm->pc+1];
-        /* Simple: no-op (arena allocator, free happens on reset) */
-        return 2;
-
-    /* ═══ Time & Random (0xE8-0xEF) ═══ */
-    case OP_RAND_RANGE:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2];
-        { int32_t range = get_reg(vm, rs1);
-          set_reg(vm, rd, range > 0 ? (int32_t)(rand() % range) : 0); }
-        return 4;
-    case OP_RAND_WEIGHTED:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; rs2 = bc[vm->pc+3];
-        { int32_t total = 0; int32_t count = get_reg(vm, rs2);
-          for (int i = 0; i < count; i++)
-              total += vm->memory[(get_reg(vm,rs1)+i) & (FLUX_MEMORY_SIZE-1)];
-          if (total > 0) { int32_t pick = rand() % total; int cumsum = 0;
-              for (int i = 0; i < count; i++) { cumsum += vm->memory[(get_reg(vm,rs1)+i)&(FLUX_MEMORY_SIZE-1)];
-                  if (cumsum > pick) { set_reg(vm, rd, i); break; } } } }
-        return 4;
-    case OP_CYCLE_READ:
-        rd = bc[vm->pc+1];
-        set_reg(vm, rd, vm->cycles);
-        return 2;
-    case OP_ALARM_SET:
-        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
-        /* stub: would trigger fault when cycles reach alarm */
-        return 4;
-    case OP_CRC32:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; imm16 = read_i16(bc, vm->pc+3);
-        { uint32_t crc = 0xFFFFFFFF;
-          for (int32_t i = 0; i < imm16; i++) {
-              uint8_t byte = vm->memory[(get_reg(vm,rs1)+i) & (FLUX_MEMORY_SIZE-1)];
-              crc ^= byte;
-              for (int b = 0; b < 8; b++)
-                  crc = (crc >> 1) ^ (0xEDB88320 & (-(crc & 1)));
-          }
-          set_reg(vm, rd, (int32_t)(crc ^ 0xFFFFFFFF)); }
-        return 5;
-    case OP_ENCODE_VARINT:
-        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
-        { int32_t val = get_reg(vm, rd); int written = 0;
-          do { uint8_t byte = val & 0x7F; val >>= 7;
-              if (val) byte |= 0x80;
-              vm->memory[(imm16 + written) & (FLUX_MEMORY_SIZE-1)] = byte;
-              written++; } while (val);
-          set_reg(vm, rd, written); }
-        return 4;
-    case OP_DECODE_VARINT:
-        rd = bc[vm->pc+1]; imm16 = read_i16(bc, vm->pc+2);
-        { int32_t result = 0; int shift = 0;
-          for (int i = 0; i < 5; i++) {
-              uint8_t byte = vm->memory[(imm16 + i) & (FLUX_MEMORY_SIZE-1)];
-              result |= (int32_t)(byte & 0x7F) << shift;
-              if (!(byte & 0x80)) break;
-              shift += 7; }
-          set_reg(vm, rd, result); }
-        return 4;
-    case OP_ATOMIC_CAS:
-        rd = bc[vm->pc+1]; rs1 = bc[vm->pc+2]; rs2 = bc[vm->pc+3];
-        { int32_t addr = get_reg(vm, rd);
-          /* CAS: if mem[addr] == rs1, mem[addr] = rs2 */
-          /* Simplified single-threaded */
-          vm->zero_flag = (vm->memory[addr & (FLUX_MEMORY_SIZE-1)] == (uint8_t)get_reg(vm, rs1)) ? 1 : 0;
-          if (vm->zero_flag) vm->memory[addr & (FLUX_MEMORY_SIZE-1)] = (uint8_t)get_reg(vm, rs2); }
-        return 4;
-
-    /* ═══ Format A: Extended System (0xF0-0xFF) ═══ */
-    case OP_DUMP:    return 1; /* stub */
-    case OP_PROFILE: return 1; /* stub */
-    case OP_WATCH:   return 1; /* stub */
     default:
+        /* Unknown opcode — fault */
         vm->faulted = true;
-        vm->fault_code = 3; /* unknown opcode */
+        vm->fault_code = 3;
         return 0;
     }
 }
