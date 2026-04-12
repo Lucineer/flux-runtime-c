@@ -88,31 +88,34 @@ int main(void) {
 
     /* ── Memory Management (0xD0-0xDF) ── */
 
-    /* MEMSET: fill range */
-    { FluxVM vm; flux_vm_init(&vm); vm.gp[1] = 0x42;
-      uint8_t bc[] = {0xD0, 0x01, 0x0A, 0x00, 0x05, 0x00}; /* fill 5 bytes at addr 10 */
+    /* MEMSET: fill range (rd=source value, rs1=start addr reg, imm16=count) */
+    { FluxVM vm; flux_vm_init(&vm); vm.gp[1] = 0x42; vm.gp[2] = 100; /* addr in R2 */
+      uint8_t bc[] = {0xD0, 0x01, 0x02, 0x05, 0x00}; /* fill 5 bytes at mem[R2] */
       flux_vm_execute(&vm, bc, 5);
-      if (vm.memory[10]==0x42 && vm.memory[14]==0x42 && vm.memory[15]==0) PASS("memset");
-      else { FAIL("memset", vm.memory[10], 0x42); failures++; } }
+      if (vm.memory[100]==0x42 && vm.memory[104]==0x42 && vm.memory[105]==0) PASS("memset");
+      else { printf("  FAIL: memset (mem[100]=%d)\n", vm.memory[100]); failures++; } }
 
-    /* MEMCPY: copy range */
+    /* MEMCPY: copy range (rd=dst addr reg, rs1=src addr reg, imm16=count) */
     { FluxVM vm; flux_vm_init(&vm);
       vm.memory[0]=1; vm.memory[1]=2; vm.memory[2]=3;
-      uint8_t bc[] = {0xD1, 0x14, 0x00, 0x00, 0x03, 0x00}; /* copy 3 bytes from addr 0 to addr 20 */
+      vm.gp[2] = 200; /* dst addr */ vm.gp[3] = 0; /* src addr */
+      uint8_t bc[] = {0xD1, 0x02, 0x03, 0x03, 0x00}; /* copy 3 bytes from R3 to R2 */
       flux_vm_execute(&vm, bc, 5);
-      if (vm.memory[20]==1 && vm.memory[22]==3) PASS("memcpy"); else { FAIL("memcpy", vm.memory[20], 1); failures++; } }
+      if (vm.memory[200]==1 && vm.memory[202]==3) PASS("memcpy"); else { FAIL("memcpy", vm.memory[200], 1); failures++; } }
 
     /* MEMCMP: equal */
     { FluxVM vm; flux_vm_init(&vm);
-      vm.memory[0]=1; vm.memory[1]=2; vm.memory[10]=1; vm.memory[11]=2;
-      uint8_t bc[] = {0xD2, 0x00, 0x0A, 0x00, 0x02, 0x00}; /* compare 2 bytes */
+      vm.memory[100]=1; vm.memory[101]=2; vm.memory[200]=1; vm.memory[201]=2;
+      vm.gp[1] = 100; vm.gp[2] = 200;
+      uint8_t bc[] = {0xD2, 0x01, 0x02, 0x02, 0x00}; /* compare 2 bytes */
       flux_vm_execute(&vm, bc, 5);
       if (vm.zero_flag == 1) PASS("memcmp_eq"); else { FAIL("memcmp_eq", vm.zero_flag, 1); failures++; } }
 
     /* MEMCMP: not equal */
     { FluxVM vm; flux_vm_init(&vm);
-      vm.memory[0]=1; vm.memory[10]=2;
-      uint8_t bc[] = {0xD2, 0x00, 0x0A, 0x00, 0x01, 0x00};
+      vm.memory[100]=1; vm.memory[200]=2;
+      vm.gp[1] = 100; vm.gp[2] = 200;
+      uint8_t bc[] = {0xD2, 0x01, 0x02, 0x01, 0x00};
       flux_vm_execute(&vm, bc, 5);
       if (vm.zero_flag == 0) PASS("memcmp_ne"); else { FAIL("memcmp_ne", vm.zero_flag, 0); failures++; } }
 
