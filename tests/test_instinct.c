@@ -4,152 +4,148 @@
 #include "flux_vm.h"
 
 #define PASS(name) printf("  PASS: %s\n", name)
-#define FAIL(name) printf("  FAIL: %s\n", name)
+#define FAIL(name, got, exp) printf("  FAIL: %s (got %d, expected %d)\n", name, got, exp)
 
 int main(void) {
     int failures = 0;
 
-    /* Test 1: INSTINCT_LOAD */
+    /* Test 1: IASLOAD — load from memory */
     {
         FluxVM vm;
         flux_vm_init(&vm);
-        uint8_t bc[] = {0x68, 0x01, 0x00, 0x05}; /* INSTINCT_LOAD R1, 5 */
-        vm.memory[5] = 42;
-        flux_vm_run(&vm, bc, sizeof(bc));
-        if (vm.gp[1] == 42) PASS("instinct_load");
-        else { FAIL("instinct_load"); failures++; }
+        vm.memory[100] = 42;
+        /* Format F: opcode rd imm16_lo imm16_hi */
+        uint8_t bc[] = {0xB0, 0x01, 100, 0}; /* IASLOAD R1, 100 */
+        flux_vm_execute(&vm, bc, 4);
+        if (vm.gp[1] == 42) PASS("iasload");
+        else { FAIL("iasload", vm.gp[1], 42); failures++; }
     }
 
-    /* Test 2: INSTINCT_STORE */
+    /* Test 2: IASTORE — store to memory */
     {
         FluxVM vm;
         flux_vm_init(&vm);
         vm.gp[2] = 99;
-        uint8_t bc[] = {0x69, 0x02, 0x00, 0x0A}; /* INSTINCT_STORE R2, 10 */
-        flux_vm_run(&vm, bc, sizeof(bc));
-        if (vm.memory[10] == 99) PASS("instinct_store");
-        else { FAIL("instinct_store"); failures++; }
+        uint8_t bc[] = {0xB1, 0x02, 200, 0}; /* IASTORE R2, 200 */
+        flux_vm_execute(&vm, bc, 4);
+        if (vm.memory[200] == 99) PASS("iastore");
+        else { FAIL("iastore", vm.memory[200], 99); failures++; }
     }
 
-    /* Test 3: INSTINCT_DECAY */
+    /* Test 3: IASDECAY — 95% decay */
     {
         FluxVM vm;
         flux_vm_init(&vm);
         vm.gp[3] = 1000;
-        uint8_t bc[] = {0x6A, 0x03, 0x00, 0x00}; /* INSTINCT_DECAY R3 */
-        flux_vm_run(&vm, bc, sizeof(bc));
-        if (vm.gp[3] == 950) PASS("instinct_decay");
-        else { FAIL("instinct_decay"); failures++; }
+        uint8_t bc[] = {0xB2, 0x03}; /* IASDECAY R3 */
+        flux_vm_execute(&vm, bc, 2);
+        if (vm.gp[3] == 950) PASS("iasdecay");
+        else { FAIL("iasdecay", vm.gp[3], 950); failures++; }
     }
 
-    /* Test 4: INSTINCT_REFLEX (triggered) */
+    /* Test 4: IASREFLEX — triggered (rd > 0, jump) */
     {
         FluxVM vm;
         flux_vm_init(&vm);
-        vm.gp[4] = 50; /* strong instinct */
-        vm.gp[5] = 0;
-        /* INSTINCT_REFLEX R4, addr6; then MOVI16 R5, 999; then target: MOVI16 R5, 777; HALT */
+        vm.gp[4] = 50;
+        /* REFLEX R4 -> offset 8; MOVI16 R5, 999 (skip target); MOVI16 R5, 777 (target); HALT */
         uint8_t bc[] = {
-            0x6B, 0x04, 0x00, 0x08, /* INSTINCT_REFLEX R4, 8 (jump to MOVI16 R5,777) */
-            0x20, 0x05, 0x0F, 0xE7, /* MOVI16 R5, 999 (should be skipped) */
-            0x20, 0x05, 0x03, 0x09, /* MOVI16 R5, 777 (target) */
-            0x00,                   /* HALT */
+            0xB3, 0x04, 8, 0,       /* IASREFLEX R4, 8 */
+            0x40, 0x05, 0xE7, 0x03, /* MOVI16 R5, 999 (skip) */
+            0x40, 0x05, 0x09, 0x03, /* MOVI16 R5, 777 (target) */
+            0x00                    /* HALT */
         };
-        flux_vm_run(&vm, bc, sizeof(bc));
-        if (vm.gp[5] == 777 && vm.gp[4] == 49) PASS("instinct_reflex_trigger");
-        else { FAIL("instinct_reflex_trigger"); failures++; }
+        flux_vm_execute(&vm, bc, 13);
+        if (vm.gp[5] == 777 && vm.gp[4] == 49) PASS("iasreflex_trigger");
+        else { printf("  FAIL: iasreflex_trigger (R5=%d R4=%d)\n", vm.gp[5], vm.gp[4]); failures++; }
     }
 
-    /* Test 5: INSTINCT_REFLEX (not triggered) */
+    /* Test 5: IASREFLEX — not triggered (rd = 0) */
     {
         FluxVM vm;
         flux_vm_init(&vm);
-        vm.gp[4] = 0; /* weak instinct */
-        vm.gp[5] = 0;
+        vm.gp[4] = 0;
         uint8_t bc[] = {
-            0x6B, 0x04, 0x00, 0x08, /* INSTINCT_REFLEX R4, 8 */
-            0x20, 0x05, 0x0F, 0xE7, /* MOVI16 R5, 999 */
-            0x20, 0x05, 0x03, 0x09, /* MOVI16 R5, 777 */
-            0x00,                   /* HALT */
+            0xB3, 0x04, 8, 0,
+            0x40, 0x05, 0xE7, 0x03,
+            0x40, 0x05, 0x09, 0x03,
+            0x00
         };
-        flux_vm_run(&vm, bc, sizeof(bc));
-        if (vm.gp[5] == 999) PASS("instinct_reflex_skip");
-        else { FAIL("instinct_reflex_skip"); failures++; }
+        flux_vm_execute(&vm, bc, 13);
+        if (vm.gp[5] == 999) PASS("iasreflex_skip");
+        else { FAIL("iasreflex_skip", vm.gp[5], 999); failures++; }
     }
 
-    /* Test 6: INSTINCT_MODULATE */
+    /* Test 6: IASMODULATE — multiply by factor */
     {
         FluxVM vm;
         flux_vm_init(&vm);
         vm.gp[6] = 500;
-        uint8_t bc[] = {0x6C, 0x06, 0x00, 0x02}; /* INSTINCT_MODULATE R6, 2000/1000=2x */
-        flux_vm_run(&vm, bc, sizeof(bc));
-        if (vm.gp[6] == 1000) PASS("instinct_modulate");
-        else { FAIL("instinct_modulate"); failures++; }
+        /* factor = 2000 -> rd * 2000 / 1000 = 1000 */
+        uint8_t bc[] = {0xB4, 0x06, 0xD0, 0x07}; /* IASMODULATE R6, 2000 */
+        flux_vm_execute(&vm, bc, 4);
+        if (vm.gp[6] == 1000) PASS("iasmodulate");
+        else { FAIL("iasmodulate", vm.gp[6], 1000); failures++; }
     }
 
-    /* Test 7: INSTINCT_THRESHOLD (above) */
+    /* Test 7: IASTHRESHOLD — above */
     {
         FluxVM vm;
         flux_vm_init(&vm);
         vm.gp[7] = 100;
-        uint8_t bc[] = {0x6D, 0x07, 0x00, 0x50}; /* INSTINCT_THRESHOLD R7, 80 */
-        flux_vm_run(&vm, bc, sizeof(bc));
-        if (vm.gp[7] == 1) PASS("instinct_threshold_above");
-        else { FAIL("instinct_threshold_above"); failures++; }
+        uint8_t bc[] = {0xB5, 0x07, 0x50, 0x00}; /* IASTHRESHOLD R7, 80 */
+        flux_vm_execute(&vm, bc, 4);
+        if (vm.gp[7] == 1) PASS("iasthreshold_above");
+        else { FAIL("iasthreshold_above", vm.gp[7], 1); failures++; }
     }
 
-    /* Test 8: INSTINCT_THRESHOLD (below) */
+    /* Test 8: IASTHRESHOLD — below */
     {
         FluxVM vm;
         flux_vm_init(&vm);
         vm.gp[7] = 50;
-        uint8_t bc[] = {0x6D, 0x07, 0x00, 0x64}; /* INSTINCT_THRESHOLD R7, 100 */
-        flux_vm_run(&vm, bc, sizeof(bc));
-        if (vm.gp[7] == 0) PASS("instinct_threshold_below");
-        else { FAIL("instinct_threshold_below"); failures++; }
+        uint8_t bc[] = {0xB5, 0x07, 0x64, 0x00}; /* IASTHRESHOLD R7, 100 */
+        flux_vm_execute(&vm, bc, 4);
+        if (vm.gp[7] == 0) PASS("iasthreshold_below");
+        else { FAIL("iasthreshold_below", vm.gp[7], 0); failures++; }
     }
 
-    /* Test 9: INSTINCT_CONVERGE */
+    /* Test 9: IASCONVERGE */
     {
         FluxVM vm;
         flux_vm_init(&vm);
-        vm.gp[8] = 0;  vm.gp[9] = 100; vm.gp[10] = 200;
-        vm.gp[11] = 300; vm.gp[12] = 400;
-        uint8_t bc[] = {0x6E, 0x10, 0x00, 0x00}; /* INSTINCT_CONVERGE R16 */
-        /* R16=0, group base=16, but we want to test with gp[8-12] */
-        /* Let's use R8 which is in group 0 (0-7), avg of 1-7 = (0+0+...)/7 ~ 0 */
-        uint8_t bc2[] = {0x6E, 0x08, 0x00, 0x00};
-        vm.gp[0] = 100; vm.gp[1] = 200; vm.gp[2] = 300; vm.gp[3] = 400;
-        vm.gp[4] = 500; vm.gp[5] = 600; vm.gp[6] = 700; vm.gp[7] = 800;
+        /* R8=0, group base=(8/8)*8=8, so group is R8-R15 */
+        vm.gp[9] = 100; vm.gp[10] = 200; vm.gp[11] = 300;
+        vm.gp[12] = 400; vm.gp[13] = 500; vm.gp[14] = 600; vm.gp[15] = 700;
         vm.gp[8] = 0;
-        flux_vm_run(&vm, bc2, sizeof(bc2));
-        /* avg of gp[0-7] except gp[8] = (100+200+300+400+500+600+700+800)/8 = 4500/8 = 562 */
-        /* gp[8] should move 25% toward 562: 0 + (562-0)/4 = 140 */
-        if (vm.gp[8] == 140) PASS("instinct_converge");
-        else { FAIL("instinct_converge"); failures++; printf("    got %d\n", vm.gp[8]); }
+        uint8_t bc[] = {0xB6, 0x08}; /* IASCONVERGE R8 */
+        flux_vm_execute(&vm, bc, 2);
+        /* avg of gp[9-15] = (100+200+300+400+500+600+700)/7 = 2800/7 = 400 */
+        /* R8 moves 25% toward 400: 0 + (400-0)/4 = 100 */
+        if (vm.gp[8] == 100) PASS("iasconverge");
+        else { printf("  FAIL: iasconverge (got %d, expected 100)\n", vm.gp[8]); failures++; }
     }
 
-    /* Test 10: INSTINCT_EXTINCT (prune) */
+    /* Test 10: IASEXTINCT — prune (weak) */
     {
         FluxVM vm;
         flux_vm_init(&vm);
-        vm.gp[9] = 5; /* below extinction threshold of 10 */
-        uint8_t bc[] = {0x6F, 0x09, 0x00, 0x00}; /* INSTINCT_EXTINCT R9 */
-        flux_vm_run(&vm, bc, sizeof(bc));
-        if (vm.gp[9] == 0) PASS("instinct_extinct_prune");
-        else { FAIL("instinct_extinct_prune"); failures++; }
+        vm.gp[9] = 5;
+        uint8_t bc[] = {0xB7, 0x09}; /* IASEXTINCT R9 */
+        flux_vm_execute(&vm, bc, 2);
+        if (vm.gp[9] == 0) PASS("iasextinct_prune");
+        else { FAIL("iasextinct_prune", vm.gp[9], 0); failures++; }
     }
 
-    /* Test 11: INSTINCT_EXTINCT (survive) */
+    /* Test 11: IASEXTINCT — survive (strong) */
     {
         FluxVM vm;
         flux_vm_init(&vm);
-        vm.gp[9] = 100; /* above extinction threshold */
-        uint8_t bc[] = {0x6F, 0x09, 0x00, 0x00};
-        flux_vm_run(&vm, bc, sizeof(bc));
-        if (vm.gp[9] == 100) PASS("instinct_extinct_survive");
-        else { FAIL("instinct_extinct_survive"); failures++; }
+        vm.gp[9] = 100;
+        uint8_t bc[] = {0xB7, 0x09};
+        flux_vm_execute(&vm, bc, 2);
+        if (vm.gp[9] == 100) PASS("iasextinct_survive");
+        else { FAIL("iasextinct_survive", vm.gp[9], 100); failures++; }
     }
 
     printf("\nInstinct opcode tests: %d failures\n", failures);
