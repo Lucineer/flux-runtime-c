@@ -4,3 +4,4 @@ test_vm
 test_memory
 flux-runtime
 .aider*
+test_flux_vm
