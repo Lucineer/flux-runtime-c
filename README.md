@@ -132,3 +132,11 @@ This VM is not a component -- it is a cell in the fleet organism. The FORMAT_A-G
 ## License
 
 MIT
+
+
+---
+
+## Fleet Context
+
+This repo is part of the [Cocapn Fleet](https://github.com/Lucineer/fleet-onboarding). See [fleet-onboarding](https://github.com/Lucineer/fleet-onboarding) for the Plato-First context architecture, bottle protocol, and onboarding guide.
+
